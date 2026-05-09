@@ -9,6 +9,16 @@ type ReachableCell = {
   sort: number;
 };
 
+type MazeProfile = {
+  side: number;
+  loopChance: number;
+  clearingCount: number;
+  clearingMinSize: number;
+  clearingMaxSize: number;
+  randomOpenChance: number;
+  aisleCount: number;
+};
+
 const directionOrder: Direction[] = ["north", "east", "south", "west"];
 
 const directionVectors: Record<Direction, Position> = {
@@ -157,9 +167,39 @@ const createMazeSkeleton = (width: number, height: number) =>
     Array.from({ length: width }, (_cell, x) => ({ x, y, wall: true }))
   );
 
+const oddSide = (side: number): number => (side % 2 === 0 ? side + 1 : side);
+
+const getMazeProfile = (difficulty: number): MazeProfile => {
+  if (difficulty <= 2) {
+    return {
+      side: 9,
+      loopChance: 0.11,
+      clearingCount: 0,
+      clearingMinSize: 0,
+      clearingMaxSize: 0,
+      randomOpenChance: 0,
+      aisleCount: 0
+    };
+  }
+
+  const side = oddSide(Math.min(31, 15 + (difficulty - 3) * 2));
+  const openScale = Math.min(1, (difficulty - 3) / 7);
+
+  return {
+    side,
+    loopChance: 0.24 + openScale * 0.22,
+    clearingCount: Math.min(10, 4 + Math.floor((difficulty - 3) / 2)),
+    clearingMinSize: 3,
+    clearingMaxSize: Math.min(9, 5 + Math.floor(difficulty / 3)),
+    randomOpenChance: 0.22 + openScale * 0.18,
+    aisleCount: Math.min(5, 1 + Math.floor((difficulty - 3) / 2))
+  };
+};
+
 const carveMaze = (
   cells: ReturnType<typeof createMazeSkeleton>,
-  random: () => number
+  random: () => number,
+  loopChance: number
 ) => {
   const width = cells[0].length;
   const height = cells.length;
@@ -202,7 +242,7 @@ const carveMaze = (
 
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
-      if (random() < 0.11) {
+      if (random() < loopChance) {
         const neighbors = shuffle(directionOrder, random);
         const direction = neighbors[0];
         const wall = {
@@ -212,6 +252,102 @@ const carveMaze = (
         if (wall.x > 0 && wall.y > 0 && wall.x < width - 1 && wall.y < height - 1) {
           cells[wall.y][wall.x].wall = false;
         }
+      }
+    }
+  }
+};
+
+const carveRectangle = (
+  cells: ReturnType<typeof createMazeSkeleton>,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number
+) => {
+  const width = cells[0].length;
+  const height = cells.length;
+  const minX = Math.max(1, Math.min(x1, x2));
+  const maxX = Math.min(width - 2, Math.max(x1, x2));
+  const minY = Math.max(1, Math.min(y1, y2));
+  const maxY = Math.min(height - 2, Math.max(y1, y2));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      cells[y][x].wall = false;
+    }
+  }
+};
+
+const countOpenNeighbors = (
+  cells: ReturnType<typeof createMazeSkeleton>,
+  position: Position
+): number =>
+  directionOrder.filter((direction) => {
+    const next = getNextPosition(position, direction);
+    return (
+      next.y > 0 &&
+      next.y < cells.length - 1 &&
+      next.x > 0 &&
+      next.x < cells[0].length - 1 &&
+      !cells[next.y][next.x].wall
+    );
+  }).length;
+
+const carveOpenResponseZones = (
+  cells: ReturnType<typeof createMazeSkeleton>,
+  random: () => number,
+  profile: MazeProfile
+) => {
+  if (profile.clearingCount === 0) {
+    return;
+  }
+
+  const width = cells[0].length;
+  const height = cells.length;
+
+  carveRectangle(cells, 1, 1, 3, 3);
+
+  for (let index = 0; index < profile.clearingCount; index += 1) {
+    const clearingWidth =
+      profile.clearingMinSize +
+      Math.floor(random() * (profile.clearingMaxSize - profile.clearingMinSize + 1));
+    const clearingHeight =
+      profile.clearingMinSize +
+      Math.floor(random() * (profile.clearingMaxSize - profile.clearingMinSize + 1));
+    const centerX = 2 + Math.floor(random() * Math.max(1, width - 4));
+    const centerY = 2 + Math.floor(random() * Math.max(1, height - 4));
+    const halfWidth = Math.floor(clearingWidth / 2);
+    const halfHeight = Math.floor(clearingHeight / 2);
+
+    carveRectangle(
+      cells,
+      centerX - halfWidth,
+      centerY - halfHeight,
+      centerX + halfWidth,
+      centerY + halfHeight
+    );
+  }
+
+  for (let index = 0; index < profile.aisleCount; index += 1) {
+    if (random() < 0.5) {
+      const y = 1 + Math.floor(random() * (height - 2));
+      const aisleHeight = random() < 0.28 ? 1 : 0;
+      carveRectangle(cells, 1, y - aisleHeight, width - 2, y + aisleHeight);
+    } else {
+      const x = 1 + Math.floor(random() * (width - 2));
+      const aisleWidth = random() < 0.28 ? 1 : 0;
+      carveRectangle(cells, x - aisleWidth, 1, x + aisleWidth, height - 2);
+    }
+  }
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      if (
+        cells[y][x].wall &&
+        countOpenNeighbors(cells, { x, y }) > 0 &&
+        random() < profile.randomOpenChance
+      ) {
+        cells[y][x].wall = false;
       }
     }
   }
@@ -347,11 +483,12 @@ export const generateMaze = (level: number, requestedSeed?: string): Maze => {
   const difficulty = Math.max(1, level);
   const seed = normalizeSeed(requestedSeed, difficulty);
   const random = mulberry32(hashSeed(seed));
-  const side = Math.min(21, 9 + Math.floor((difficulty - 1) / 2) * 2);
-  const width = side % 2 === 0 ? side + 1 : side;
+  const profile = getMazeProfile(difficulty);
+  const width = profile.side;
   const height = width;
   const cells = createMazeSkeleton(width, height);
-  carveMaze(cells, random);
+  carveMaze(cells, random, profile.loopChance);
+  carveOpenResponseZones(cells, random, profile);
 
   const start = { x: 1, y: 1 };
   const provisionalMaze: Maze = {
