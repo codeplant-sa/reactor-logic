@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Camera,
   Github,
   Info,
   Map,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import BlockPalette from "./components/BlockPalette";
 import CodePreview from "./components/CodePreview";
-import GameScene from "./components/GameScene";
+import GameScene, { CameraViewMode } from "./components/GameScene";
 import HUD from "./components/HUD";
 import MiniMap from "./components/MiniMap";
 import MissionBriefing from "./components/MissionBriefing";
@@ -211,6 +212,7 @@ export default function App() {
   const [seedDraft, setSeedDraft] = useState("");
   const [trayOpen, setTrayOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(true);
+  const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("overhead");
   const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
   const [paletteAddRequest, setPaletteAddRequest] =
     useState<PaletteAddRequest | null>(null);
@@ -499,6 +501,17 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={`view-toggle ${cameraViewMode === "robot" ? "active" : ""}`}
+              aria-pressed={cameraViewMode === "robot"}
+              onClick={() =>
+                setCameraViewMode((mode) => (mode === "overhead" ? "robot" : "overhead"))
+              }
+            >
+              <Camera size={15} />
+              {cameraViewMode === "robot" ? "Robot cam" : "Overhead"}
+            </button>
+            <button
+              type="button"
               className={`tray-toggle ${trayOpen ? "active" : ""}`}
               aria-expanded={trayOpen}
               aria-controls="mission-tray"
@@ -511,7 +524,7 @@ export default function App() {
         }
       />
       <section className="playfield-zone">
-        <GameScene state={game} />
+        <GameScene state={game} viewMode={cameraViewMode} />
         {mapPinned ? (
           <div className="pinned-minimap" aria-label="Pinned minimap">
             <MiniMap state={game} compact />

@@ -1,12 +1,15 @@
 import React, { useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrthographicCamera } from "@react-three/drei";
+import { OrthographicCamera, PerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
 import { getNextPosition, isWall, samePosition } from "../game/mazeGenerator";
 import { Direction, GameState, Hotspot, Position } from "../game/types";
 
+export type CameraViewMode = "overhead" | "robot";
+
 interface GameSceneProps {
   state: GameState;
+  viewMode: CameraViewMode;
 }
 
 const directionRotation: Record<Direction, number> = {
@@ -14,6 +17,13 @@ const directionRotation: Record<Direction, number> = {
   east: -Math.PI / 2,
   south: Math.PI,
   west: Math.PI / 2
+};
+
+const directionVectors: Record<Direction, THREE.Vector3> = {
+  north: new THREE.Vector3(0, 0, -1),
+  east: new THREE.Vector3(1, 0, 0),
+  south: new THREE.Vector3(0, 0, 1),
+  west: new THREE.Vector3(-1, 0, 0)
 };
 
 const toWorld = (maze: GameState["maze"], position: Position): [number, number, number] => [
@@ -31,11 +41,15 @@ const getCameraFocus = (maze: GameState["maze"], position: Position): THREE.Vect
   return focus.lerp(new THREE.Vector3(0, 0, 0), centerBias);
 };
 
-function CameraRig({ state }: { state: GameState }) {
+function OverheadCameraRig({ state }: { state: GameState }) {
   const { camera, size } = useThree();
   const levelFocus = useMemo(
     () => getCameraFocus(state.maze, state.maze.start),
     [state.maze]
+  );
+  const robotFocus = useMemo(
+    () => getCameraFocus(state.maze, state.position),
+    [state.maze, state.position]
   );
   const cameraFocus = useRef(levelFocus.clone());
   const lastMazeKey = useRef(`${state.seed}:${state.maze.width}:${state.maze.height}`);
@@ -55,6 +69,30 @@ function CameraRig({ state }: { state: GameState }) {
       cameraFocus.current.copy(levelFocus);
     }
 
+    const visibleWidth = size.width / Math.max(1, camera.zoom || targetZoom);
+    const visibleHeight = size.height / Math.max(1, camera.zoom || targetZoom);
+    const deadZoneX = Math.max(3.4, visibleWidth * 0.28);
+    const deadZoneZ = Math.max(2.8, visibleHeight * 0.24);
+    const desiredFocus = cameraFocus.current.clone();
+    const offsetX = robotFocus.x - cameraFocus.current.x;
+    const offsetZ = robotFocus.z - cameraFocus.current.z;
+
+    if (Math.abs(offsetX) > deadZoneX) {
+      desiredFocus.x = robotFocus.x - Math.sign(offsetX) * deadZoneX;
+    }
+
+    if (Math.abs(offsetZ) > deadZoneZ) {
+      desiredFocus.z = robotFocus.z - Math.sign(offsetZ) * deadZoneZ;
+    }
+
+    const focusSpeed =
+      state.executionStatus === "running"
+        ? 0.018
+        : state.executionStatus === "paused" || state.executionStatus === "stepping"
+          ? 0.055
+          : 0.035;
+    cameraFocus.current.lerp(desiredFocus, isNewMaze ? 1 : focusSpeed);
+
     const desiredPosition = new THREE.Vector3(
       cameraFocus.current.x,
       distance * 1.35,
@@ -70,6 +108,85 @@ function CameraRig({ state }: { state: GameState }) {
   });
 
   return null;
+}
+
+const getRobotCameraTargets = (
+  maze: GameState["maze"],
+  position: Position,
+  facing: Direction
+) => {
+  const robotWorld = new THREE.Vector3(...toWorld(maze, position));
+  const forward = directionVectors[facing];
+  const eye = robotWorld
+    .clone()
+    .add(forward.clone().multiplyScalar(0.22))
+    .add(new THREE.Vector3(0, 0.72, 0));
+  const lookAt = eye
+    .clone()
+    .add(forward.clone().multiplyScalar(5.4));
+  lookAt.y = 0.34;
+
+  return { eye, lookAt };
+};
+
+function RobotCameraRig({ state }: { state: GameState }) {
+  const { camera } = useThree();
+  const targets = useMemo(
+    () => getRobotCameraTargets(state.maze, state.position, state.facing),
+    [state.maze, state.position, state.facing]
+  );
+  const lookTarget = useRef(targets.lookAt.clone());
+  const lastMazeKey = useRef(`${state.seed}:${state.maze.width}:${state.maze.height}`);
+
+  useFrame(() => {
+    const mazeKey = `${state.seed}:${state.maze.width}:${state.maze.height}`;
+    const isNewMaze = lastMazeKey.current !== mazeKey;
+    if (isNewMaze) {
+      lastMazeKey.current = mazeKey;
+      camera.position.copy(targets.eye);
+      lookTarget.current.copy(targets.lookAt);
+    }
+
+    const followSpeed = state.executionStatus === "running" ? 0.11 : 0.18;
+    const lookSpeed = state.executionStatus === "running" ? 0.13 : 0.22;
+    camera.position.lerp(targets.eye, isNewMaze ? 1 : followSpeed);
+    lookTarget.current.lerp(targets.lookAt, isNewMaze ? 1 : lookSpeed);
+    camera.lookAt(lookTarget.current);
+
+    if ("fov" in camera) {
+      camera.fov += (62 - camera.fov) * 0.1;
+      camera.updateProjectionMatrix();
+    }
+  });
+
+  return null;
+}
+
+function RobotHeadlamp({ state }: { state: GameState }) {
+  const light = useRef<THREE.PointLight>(null);
+  const target = useMemo(() => {
+    const robotWorld = new THREE.Vector3(...toWorld(state.maze, state.position));
+    return robotWorld
+      .clone()
+      .add(directionVectors[state.facing].clone().multiplyScalar(0.65))
+      .add(new THREE.Vector3(0, 0.78, 0));
+  }, [state.maze, state.position, state.facing]);
+
+  useFrame(() => {
+    if (!light.current) return;
+    light.current.position.lerp(target, 0.2);
+  });
+
+  return (
+    <pointLight
+      ref={light}
+      position={target.toArray()}
+      color="#b9fff2"
+      intensity={1.9}
+      distance={6.2}
+      decay={1.65}
+    />
+  );
 }
 
 function FloorTile({
@@ -286,29 +403,62 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
   );
 }
 
-function MazeScene({ state }: GameSceneProps) {
+function MazeScene({ state, viewMode }: GameSceneProps) {
   const cameraDistance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
   const cameraFocus = useMemo(
     () => getCameraFocus(state.maze, state.maze.start),
     [state.maze]
   );
+  const initialCameraPosition = useMemo<[number, number, number]>(
+    () => [
+      cameraFocus.x,
+      cameraDistance * 1.35,
+      cameraFocus.z + cameraDistance * 0.62
+    ],
+    [cameraDistance, cameraFocus.x, cameraFocus.z]
+  );
+  const initialRobotCamera = useMemo(
+    () => getRobotCameraTargets(state.maze, state.position, state.facing),
+    [state.seed, viewMode]
+  );
+  const initialRobotCameraPosition = useMemo<[number, number, number]>(
+    () => [
+      initialRobotCamera.eye.x,
+      initialRobotCamera.eye.y,
+      initialRobotCamera.eye.z
+    ],
+    [initialRobotCamera]
+  );
 
   return (
     <>
-      <OrthographicCamera
-        key={state.seed}
-        makeDefault
-        position={[
-          cameraFocus.x,
-          cameraDistance * 1.35,
-          cameraFocus.z + cameraDistance * 0.62
-        ]}
-        zoom={42}
-        near={0.1}
-        far={100}
-      />
-      <CameraRig state={state} />
-      <ambientLight intensity={0.55} />
+      {viewMode === "overhead" ? (
+        <>
+          <OrthographicCamera
+            key={`${state.seed}-overhead`}
+            makeDefault
+            position={initialCameraPosition}
+            zoom={42}
+            near={0.1}
+            far={100}
+          />
+          <OverheadCameraRig state={state} />
+        </>
+      ) : (
+        <>
+          <PerspectiveCamera
+            key={`${state.seed}-robot`}
+            makeDefault
+            position={initialRobotCameraPosition}
+            fov={62}
+            near={0.04}
+            far={80}
+          />
+          <RobotCameraRig state={state} />
+        </>
+      )}
+      <ambientLight intensity={viewMode === "robot" ? 0.7 : 0.55} />
+      {viewMode === "robot" ? <RobotHeadlamp state={state} /> : null}
       <directionalLight
         castShadow
         position={[4, 9, 6]}
@@ -336,19 +486,27 @@ function MazeScene({ state }: GameSceneProps) {
         <HotspotMarker key={hotspot.id} maze={state.maze} hotspot={hotspot} />
       ))}
       <SensorHint state={state} />
-      <RobotModel state={state} />
+      {viewMode === "overhead" ? <RobotModel state={state} /> : null}
     </>
   );
 }
 
-export default function GameScene({ state }: GameSceneProps) {
+export default function GameScene({ state, viewMode }: GameSceneProps) {
   return (
-    <div className="scene-shell">
+    <div className={`scene-shell ${viewMode === "robot" ? "robot-view" : ""}`}>
       <Canvas shadows dpr={[1, 1.75]} gl={{ antialias: true }}>
         <color attach="background" args={["#101720"]} />
-        <MazeScene state={state} />
+        <MazeScene state={state} viewMode={viewMode} />
       </Canvas>
+      {viewMode === "robot" ? (
+        <div className="robot-feed-overlay" aria-label="Robot camera feed">
+          <span className="live-dot" />
+          <strong>Robot cam</strong>
+          <span>{state.robot.name}</span>
+        </div>
+      ) : null}
       <div className="scene-caption">
+        <span>{viewMode === "robot" ? "Robot POV" : "Overhead"}</span>
         <span>{state.robot.name}</span>
         <span>
           Facing {state.facing} at {state.position.x}, {state.position.y}
