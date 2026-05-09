@@ -27,6 +27,10 @@ interface DropTarget {
 
 type BlockLocation = DropTarget;
 
+const LEGACY_BLOCK_MIME = "application/reactor-block";
+const PALETTE_BLOCK_MIME = "application/reactor-palette-block";
+const PROGRAM_BLOCK_MIME = "application/reactor-program-block";
+
 export interface PaletteAddRequest {
   id: number;
   block: ProgramBlock;
@@ -43,12 +47,23 @@ interface ProgramEditorProps {
 }
 
 const parsePayload = (event: DragEvent) => {
-  const raw = event.dataTransfer.getData("application/reactor-block");
-  if (!raw) {
+  const programBlockId = event.dataTransfer.getData(PROGRAM_BLOCK_MIME);
+  if (programBlockId) {
+    return { source: "program" as const, blockId: programBlockId };
+  }
+
+  const paletteBlockType = event.dataTransfer.getData(PALETTE_BLOCK_MIME);
+  if (paletteBlockType) {
+    return { source: "palette" as const, type: paletteBlockType };
+  }
+
+  const legacyRaw = event.dataTransfer.getData(LEGACY_BLOCK_MIME);
+  if (!legacyRaw) {
     return null;
   }
+
   try {
-    return JSON.parse(raw) as
+    return JSON.parse(legacyRaw) as
       | { source: "palette"; type: string }
       | { source: "program"; blockId: string };
   } catch {
@@ -91,6 +106,7 @@ const findLocation = (
 };
 
 const blockContains = (block: ProgramBlock, blockId: string): boolean =>
+  Boolean(blockId) &&
   Object.values(block.children ?? {}).some((children) =>
     (children ?? []).some((child) => child.id === blockId || blockContains(child, blockId))
   );
@@ -251,7 +267,11 @@ function DropSlot({
       }}
       onDragOver={(event) => {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
+        event.dataTransfer.dropEffect = Array.from(event.dataTransfer.types).includes(
+          PROGRAM_BLOCK_MIME
+        )
+          ? "move"
+          : "copy";
       }}
       onDrop={(event) => onDropBlock(target, event)}
     >
@@ -538,8 +558,9 @@ export default function ProgramEditor({
         draggable
         onDragStart={(event) => {
           event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData(PROGRAM_BLOCK_MIME, block.id);
           event.dataTransfer.setData(
-            "application/reactor-block",
+            LEGACY_BLOCK_MIME,
             JSON.stringify({ source: "program", blockId: block.id })
           );
         }}

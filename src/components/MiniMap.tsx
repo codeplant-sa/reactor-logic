@@ -4,19 +4,23 @@ import { GameState, Position } from "../game/types";
 
 interface MiniMapProps {
   state: GameState;
+  compact?: boolean;
 }
 
 const hasPosition = (items: Position[], position: Position): boolean =>
   items.some((item) => samePosition(item, position));
 
-export default function MiniMap({ state }: MiniMapProps) {
+export default function MiniMap({ state, compact = false }: MiniMapProps) {
   const trace = new Set(state.pathTrace.map(positionKey));
 
   return (
-    <section className="minimap-panel" aria-label="Mission minimap">
+    <section
+      className={`minimap-panel ${compact ? "compact" : ""}`}
+      aria-label="Mission minimap"
+    >
       <div className="panel-heading">
         <span>Minimap</span>
-        <small>Seed {state.seed}</small>
+        <small>{compact ? `L${state.level}` : `Seed ${state.seed}`}</small>
       </div>
       <div
         className="minimap"

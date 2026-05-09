@@ -28,6 +28,13 @@ module.exports = {
         generator: {
           filename: "assets/[name].[contenthash][ext]"
         }
+      },
+      {
+        test: /\.(mp3|ogg|wav)$/i,
+        type: "asset/resource",
+        generator: {
+          filename: "assets/[name].[contenthash][ext]"
+        }
       }
     ]
   },

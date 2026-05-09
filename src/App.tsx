@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Github,
   Info,
+  Map,
   Pause,
   Play,
   RefreshCw,
   RotateCcw,
   Shuffle,
   SkipForward,
+  Volume2,
+  VolumeX,
   X
 } from "lucide-react";
 import BlockPalette from "./components/BlockPalette";
@@ -16,9 +20,19 @@ import HUD from "./components/HUD";
 import MiniMap from "./components/MiniMap";
 import MissionBriefing from "./components/MissionBriefing";
 import ProgramEditor, { PaletteAddRequest } from "./components/ProgramEditor";
+import Preloader from "./components/Preloader";
 import RobotSelect from "./components/RobotSelect";
+import {
+  isBackgroundMusicMuted,
+  playIntroMusic,
+  playBackgroundMusic,
+  setBackgroundMusicMuted,
+  stopIntroMusic,
+  stopBackgroundMusic
+} from "./game/audio";
 import { countBlocks } from "./game/blocks";
 import { executeNextInstruction, createExecutionRuntime } from "./game/interpreter";
+import { preloadGameAssets, PreloadProgress } from "./game/preloadAssets";
 import {
   buildPracticeProgram,
   generateMaze,
@@ -33,6 +47,8 @@ import {
   ProgramBlock,
   RobotConfig
 } from "./game/types";
+
+const GITHUB_REPO_URL = "https://github.com/codeplant-sa/reactor-logic";
 
 const createGameState = (
   robot: RobotConfig,
@@ -166,12 +182,36 @@ function SensorPanel({ state }: { state: GameState }) {
   );
 }
 
+function GitHubLink() {
+  return (
+    <a
+      className="github-link"
+      href={GITHUB_REPO_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Open project on GitHub"
+    >
+      <Github size={18} />
+    </a>
+  );
+}
+
 export default function App() {
   const [selectedRobot, setSelectedRobot] = useState<RobotConfig | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
+  const [assetsReady, setAssetsReady] = useState(false);
+  const [briefingEntered, setBriefingEntered] = useState(false);
+  const [preloadProgress, setPreloadProgress] = useState<PreloadProgress>({
+    loaded: 0,
+    total: 4,
+    label: "Starting asset check"
+  });
+  const [preloadError, setPreloadError] = useState<string | undefined>();
   const [level, setLevel] = useState(1);
   const [seedDraft, setSeedDraft] = useState("");
   const [trayOpen, setTrayOpen] = useState(false);
+  const [mapPinned, setMapPinned] = useState(true);
+  const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
   const [paletteAddRequest, setPaletteAddRequest] =
     useState<PaletteAddRequest | null>(null);
   const runtimeRef = useRef<ExecutionRuntime | null>(null);
@@ -180,13 +220,61 @@ export default function App() {
     runtimeRef.current = null;
   };
 
+  useEffect(() => {
+    let active = true;
+
+    preloadGameAssets((progress) => {
+      if (active) {
+        setPreloadProgress(progress);
+      }
+    })
+      .then(() => {
+        if (active) {
+          setAssetsReady(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPreloadError(
+            error instanceof Error ? error.message : "Unable to load game assets."
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const beginMission = (robot: RobotConfig, nextLevel = level, seed?: string) => {
     resetRuntime();
     const created = createGameState(robot, nextLevel, seed);
+    stopIntroMusic();
     setSelectedRobot(robot);
     setLevel(nextLevel);
     setSeedDraft(created.seed);
     setGame(created);
+    setBackgroundMusicMuted(musicMuted);
+    if (!musicMuted) {
+      playBackgroundMusic();
+    }
+  };
+
+  const enterBriefing = () => {
+    setBriefingEntered(true);
+    setBackgroundMusicMuted(musicMuted);
+    if (!musicMuted) {
+      playIntroMusic();
+    }
+  };
+
+  const toggleMusic = () => {
+    const nextMuted = !musicMuted;
+    setMusicMuted(nextMuted);
+    setBackgroundMusicMuted(nextMuted);
+    if (!nextMuted && game) {
+      playBackgroundMusic();
+    }
   };
 
   const executeStep = useCallback((nextStatus: GameState["executionStatus"]) => {
@@ -319,9 +407,24 @@ export default function App() {
     );
   };
 
+  if (!assetsReady || !briefingEntered) {
+    return (
+      <Preloader
+        loaded={preloadProgress.loaded}
+        total={preloadProgress.total}
+        label={preloadProgress.label}
+        ready={assetsReady}
+        error={preloadError}
+        onEnter={enterBriefing}
+        repoLink={<GitHubLink />}
+      />
+    );
+  }
+
   if (!selectedRobot || !game) {
     return (
       <main className="landing-screen">
+        <GitHubLink />
         <section className="landing-title-lockup" aria-label="Game title">
           <h1>Reactor Logic</h1>
         </section>
@@ -378,6 +481,24 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={`audio-toggle ${!musicMuted ? "active" : ""}`}
+              aria-pressed={!musicMuted}
+              onClick={toggleMusic}
+            >
+              {musicMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              {musicMuted ? "Muted" : "Music"}
+            </button>
+            <button
+              type="button"
+              className={`map-pin-toggle ${mapPinned ? "active" : ""}`}
+              aria-pressed={mapPinned}
+              onClick={() => setMapPinned((pinned) => !pinned)}
+            >
+              <Map size={15} />
+              {mapPinned ? "Hide map" : "Pin map"}
+            </button>
+            <button
+              type="button"
               className={`tray-toggle ${trayOpen ? "active" : ""}`}
               aria-expanded={trayOpen}
               aria-controls="mission-tray"
@@ -391,6 +512,11 @@ export default function App() {
       />
       <section className="playfield-zone">
         <GameScene state={game} />
+        {mapPinned ? (
+          <div className="pinned-minimap" aria-label="Pinned minimap">
+            <MiniMap state={game} compact />
+          </div>
+        ) : null}
       </section>
       <aside
         id="mission-tray"
@@ -414,7 +540,17 @@ export default function App() {
             </div>
             <div className="tray-scroll">
               <MissionBriefing compact />
-              <MiniMap state={game} />
+              {mapPinned ? (
+                <section className="tray-panel map-pin-note">
+                  <div className="panel-heading">
+                    <span>Minimap</span>
+                    <small>Pinned</small>
+                  </div>
+                  <p>The minimap is pinned to the playfield so it stays visible with the command list.</p>
+                </section>
+              ) : (
+                <MiniMap state={game} />
+              )}
               <SensorPanel state={game} />
               <ScorePanel state={game} />
               <CodePreview program={game.program} />
@@ -454,6 +590,10 @@ export default function App() {
                       setSelectedRobot(null);
                       setGame(null);
                       setTrayOpen(false);
+                      stopBackgroundMusic();
+                      if (!musicMuted) {
+                        playIntroMusic();
+                      }
                       resetRuntime();
                     }}
                   >

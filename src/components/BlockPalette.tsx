@@ -2,6 +2,9 @@ import React, { useRef, useState } from "react";
 import { blockDefinitions, paletteBlockTypes } from "../game/blocks";
 import { ProgramBlock } from "../game/types";
 
+const LEGACY_BLOCK_MIME = "application/reactor-block";
+const PALETTE_BLOCK_MIME = "application/reactor-palette-block";
+
 interface BlockPaletteProps {
   onAddBlock: (block: ProgramBlock) => void;
 }
@@ -39,8 +42,9 @@ export default function BlockPalette({ onAddBlock }: BlockPaletteProps) {
                 suppressClickAfterDrag.current = true;
                 setHoveredType(null);
                 event.dataTransfer.effectAllowed = "copy";
+                event.dataTransfer.setData(PALETTE_BLOCK_MIME, type);
                 event.dataTransfer.setData(
-                  "application/reactor-block",
+                  LEGACY_BLOCK_MIME,
                   JSON.stringify({ source: "palette", type })
                 );
               }}

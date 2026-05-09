@@ -25,31 +25,46 @@ const toWorld = (maze: GameState["maze"], position: Position): [number, number, 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+const getCameraFocus = (maze: GameState["maze"], position: Position): THREE.Vector3 => {
+  const focus = new THREE.Vector3(...toWorld(maze, position));
+  const centerBias = maze.width <= 9 ? 0.16 : 0.04;
+  return focus.lerp(new THREE.Vector3(0, 0, 0), centerBias);
+};
+
 function CameraRig({ state }: { state: GameState }) {
   const { camera, size } = useThree();
-  const focus = useMemo(
-    () => {
-      const robotWorld = new THREE.Vector3(...toWorld(state.maze, state.position));
-      const mazeBias = clamp((state.maze.width - 11) / 8, 0, 0.82);
-      return robotWorld.lerp(new THREE.Vector3(0, 0, 0), mazeBias);
-    },
-    [state.maze, state.position]
+  const levelFocus = useMemo(
+    () => getCameraFocus(state.maze, state.maze.start),
+    [state.maze]
   );
+  const cameraFocus = useRef(levelFocus.clone());
+  const lastMazeKey = useRef(`${state.seed}:${state.maze.width}:${state.maze.height}`);
   const distance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
-  const baseZoom = size.width < 700 ? 30 : 42;
-  const targetZoom = clamp(baseZoom - Math.max(0, state.maze.width - 9) * 1.75, 18, baseZoom);
+  const isCompact = size.width < 700;
+  const tutorialZoom = isCompact ? 32 : 44;
+  const openMazeZoom = isCompact
+    ? 38 + Math.min(10, Math.max(0, state.maze.width - 9) * 0.5)
+    : 54 + Math.min(12, Math.max(0, state.maze.width - 9) * 0.55);
+  const targetZoom = state.maze.width <= 9 ? tutorialZoom : openMazeZoom;
 
   useFrame(() => {
+    const mazeKey = `${state.seed}:${state.maze.width}:${state.maze.height}`;
+    const isNewMaze = lastMazeKey.current !== mazeKey;
+    if (isNewMaze) {
+      lastMazeKey.current = mazeKey;
+      cameraFocus.current.copy(levelFocus);
+    }
+
     const desiredPosition = new THREE.Vector3(
-      focus.x,
+      cameraFocus.current.x,
       distance * 1.35,
-      focus.z + distance * 0.62
+      cameraFocus.current.z + distance * 0.62
     );
-    camera.position.lerp(desiredPosition, 0.12);
-    camera.lookAt(focus.x, 0, focus.z);
+    camera.position.lerp(desiredPosition, isNewMaze ? 1 : 0.08);
+    camera.lookAt(camera.position.x, 0, camera.position.z - distance * 0.62);
 
     if ("zoom" in camera) {
-      camera.zoom += (targetZoom - camera.zoom) * 0.12;
+      camera.zoom += (targetZoom - camera.zoom) * (isNewMaze ? 1 : 0.08);
       camera.updateProjectionMatrix();
     }
   });
@@ -272,14 +287,22 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
 }
 
 function MazeScene({ state }: GameSceneProps) {
-  const cameraDistance = Math.max(state.maze.width, state.maze.height) * 1.2;
-  const start = toWorld(state.maze, state.position);
+  const cameraDistance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
+  const cameraFocus = useMemo(
+    () => getCameraFocus(state.maze, state.maze.start),
+    [state.maze]
+  );
 
   return (
     <>
       <OrthographicCamera
+        key={state.seed}
         makeDefault
-        position={[start[0], cameraDistance, start[2] + cameraDistance]}
+        position={[
+          cameraFocus.x,
+          cameraDistance * 1.35,
+          cameraFocus.z + cameraDistance * 0.62
+        ]}
         zoom={42}
         near={0.1}
         far={100}
