@@ -2,6 +2,20 @@
 
 Expandable React, TypeScript, and Three.js browser game prototype for teaching beginner logic and early coding concepts through a fictional disaster-response robot maze.
 
+## Gameplay
+
+Program a response robot through a compromised fictional coastal research reactor maze. The player chooses a robot, assembles command blocks, previews Python-like pseudocode, then runs or steps through the program to seal stabilizing-foam hotspots and reach extraction before the turn-based meltdown timer expires.
+
+![Robot selection and mission briefing](docs/screenshots/intro.png)
+
+The main play view keeps the maze visible on the left and reserves the right panel for the command list and control-module strip. Players can click modules to add commands, drag to reorder, and use the header controls for Run, Step, Pause, and the slide-out mission tray.
+
+![Command list with practice route](docs/screenshots/command-list.png)
+
+The mission tray keeps secondary information out of the core programming panel while still exposing the minimap, pseudocode preview, mission log, score, seed controls, and reset tools.
+
+![Mission tray with minimap and pseudocode](docs/screenshots/mission-tray.png)
+
 ## Run
 
 ```bash
@@ -43,6 +57,10 @@ npm run pages:deploy
 ```
 
 The local `wrangler.jsonc`, `.wrangler/`, `.dev.vars*`, and other Cloudflare/account-specific files are ignored so secrets and deployment-specific settings do not get committed to the public repo. Keep production values in the Cloudflare Pages project settings.
+
+## License
+
+Licensed under the GNU Affero General Public License v3.0 only. This keeps collaboration open: modified versions and network-deployed derivatives must provide corresponding source under the same license. Commercial use is allowed when those copyleft obligations are met; commercial closed-source forks are not permitted by this license.
 
 ## Project Shape
 

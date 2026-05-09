@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Expandable React, TypeScript, and Three.js educational maze prototype.",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "start": "webpack serve --mode development --host 0.0.0.0",
     "build": "webpack --mode production",
