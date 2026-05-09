@@ -234,7 +234,7 @@ export default function App() {
   const [seedDraft, setSeedDraft] = useState("");
   const [trayOpen, setTrayOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(true);
-  const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("overhead");
+  const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("robot");
   const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
   const [paletteAddRequest, setPaletteAddRequest] =
     useState<PaletteAddRequest | null>(null);
