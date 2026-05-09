@@ -8,6 +8,7 @@ interface PreloaderProps {
   error?: string;
   onEnter: () => void;
   repoLink?: React.ReactNode;
+  brandLink?: React.ReactNode;
 }
 
 export default function Preloader({
@@ -17,13 +18,15 @@ export default function Preloader({
   ready,
   error,
   onEnter,
-  repoLink
+  repoLink,
+  brandLink
 }: PreloaderProps) {
   const progress = total > 0 ? Math.round((loaded / total) * 100) : 0;
 
   return (
     <main className="preloader-screen" aria-live="polite">
       {repoLink}
+      {brandLink}
       <div className="preloader-grid" aria-hidden>
         <span className="preload-scanline" />
         <span className="preload-path one" />

@@ -43,6 +43,7 @@ import {
 } from "./game/mazeGenerator";
 import { calculateScore } from "./game/scoring";
 import {
+  Direction,
   ExecutionRuntime,
   GameState,
   ProgramBlock,
@@ -50,6 +51,12 @@ import {
 } from "./game/types";
 
 const GITHUB_REPO_URL = "https://github.com/codeplant-sa/reactor-logic";
+const START_FACING_PREFERENCE: Direction[] = ["east", "south", "north", "west"];
+
+const chooseStartFacing = (maze: GameState["maze"]): Direction =>
+  START_FACING_PREFERENCE.find(
+    (direction) => !isWall(maze, getNextPosition(maze.start, direction))
+  ) ?? "east";
 
 const createGameState = (
   robot: RobotConfig,
@@ -58,6 +65,7 @@ const createGameState = (
   program: ProgramBlock[] = []
 ): GameState => {
   const maze = generateMaze(level, seed);
+  const startFacing = chooseStartFacing(maze);
   const hotspots = maze.hotspots.map((hotspot) => ({ ...hotspot, sealed: false }));
   const plantRadiation =
     maze.baseRadiation +
@@ -69,7 +77,7 @@ const createGameState = (
     maze,
     robot,
     position: maze.start,
-    facing: "east",
+    facing: startFacing,
     program,
     variables: { counter: 0 },
     hotspots,
@@ -193,6 +201,20 @@ function GitHubLink() {
       aria-label="Open project on GitHub"
     >
       <Github size={18} />
+    </a>
+  );
+}
+
+function CodePlantCorner() {
+  return (
+    <a
+      className="codeplant-corner"
+      href="https://codeplant.co.za"
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Visit CodePlant"
+    >
+      <span className="codeplant-logo" aria-hidden />
     </a>
   );
 }
@@ -368,7 +390,7 @@ export default function App() {
 
   const loadPracticeRoute = () => {
     if (!game) return;
-    const program = buildPracticeProgram(game.maze, "east");
+    const program = buildPracticeProgram(game.maze, chooseStartFacing(game.maze));
     resetRuntime();
     setGame((previous) =>
       previous
@@ -419,6 +441,7 @@ export default function App() {
         error={preloadError}
         onEnter={enterBriefing}
         repoLink={<GitHubLink />}
+        brandLink={<CodePlantCorner />}
       />
     );
   }
@@ -430,15 +453,7 @@ export default function App() {
         <section className="landing-title-lockup" aria-label="Game title">
           <h1>Reactor Logic</h1>
         </section>
-        <a
-          className="codeplant-corner"
-          href="https://codeplant.co.za"
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Visit CodePlant"
-        >
-          <span className="codeplant-logo" aria-hidden />
-        </a>
+        <CodePlantCorner />
         <div className="landing-inner">
           <MissionBriefing />
           <RobotSelect onSelect={(robot) => beginMission(robot, 1)} />
