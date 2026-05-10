@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera, PerspectiveCamera, useTexture } from "@react-three/drei";
 import * as THREE from "three";
@@ -31,18 +31,29 @@ const directionVectors: Record<Direction, THREE.Vector3> = {
   west: new THREE.Vector3(-1, 0, 0)
 };
 
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const ROBOT_CAMERA_MAX_PAN = THREE.MathUtils.degToRad(30);
+const ROBOT_CAMERA_MAX_VERTICAL_PAN = 0.38;
+const ROBOT_CAMERA_PAN_RESPONSE = 9;
+const ROBOT_CAMERA_RECENTER_RESPONSE = 5.5;
+const BACKDROP_HORIZONTAL_PARALLAX = 1.6;
+const BACKDROP_VERTICAL_PARALLAX = 0.9;
+const RADIATION_BLADE_ANGLES = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3];
+
 const WALL_TEXTURE_PATHS = [
   wallTextureOneUrl,
   wallTextureTwoUrl,
   wallTextureFiveUrl
 ];
-const FLOOR_TEXTURE_PATH = floorTextureUrl;
+const WALL_TOP_TEXTURE_PATH = floorTextureUrl;
 const REACTOR_BACKDROP_PATH = reactorBackdropUrl;
-const BACKDROP_DISTANCE = 22;
-const BACKDROP_VERTICAL_OFFSET = 1.65;
+const BACKDROP_DISTANCE = 34;
+const BACKDROP_VERTICAL_OFFSET = 14.7;
+const BACKDROP_VIEW_SCALE = 2.16;
+const BACKDROP_IMAGE_ASPECT_FALLBACK = 1774 / 887;
 
 useTexture.preload(WALL_TEXTURE_PATHS);
-useTexture.preload(FLOOR_TEXTURE_PATH);
+useTexture.preload(WALL_TOP_TEXTURE_PATH);
 useTexture.preload(REACTOR_BACKDROP_PATH);
 
 const toWorld = (maze: GameState["maze"], position: Position): [number, number, number] => [
@@ -50,12 +61,6 @@ const toWorld = (maze: GameState["maze"], position: Position): [number, number, 
   0,
   position.y - maze.height / 2 + 0.5
 ];
-
-const getCameraFocus = (maze: GameState["maze"], position: Position): THREE.Vector3 => {
-  const focus = new THREE.Vector3(...toWorld(maze, position));
-  const centerBias = maze.width <= 9 ? 0.16 : 0.04;
-  return focus.lerp(new THREE.Vector3(0, 0, 0), centerBias);
-};
 
 const hashWallCell = (seed: string, x: number, y: number): number => {
   const key = `${seed}:${x}:${y}`;
@@ -109,8 +114,8 @@ function useBackdropTexture() {
   }, [texture]);
 }
 
-function useFloorTexture() {
-  const texture = useTexture(FLOOR_TEXTURE_PATH);
+function useWallTopTexture() {
+  const texture = useTexture(WALL_TOP_TEXTURE_PATH);
 
   return useMemo(() => {
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -125,66 +130,24 @@ function useFloorTexture() {
 
 function OverheadCameraRig({ state }: { state: GameState }) {
   const { camera, size } = useThree();
-  const levelFocus = useMemo(
-    () => getCameraFocus(state.maze, state.maze.start),
-    [state.maze]
+  const distance = Math.max(18, Math.max(state.maze.width, state.maze.height) * 2.2);
+  const horizontalPadding = size.width < 700 ? 2.4 : 2.8;
+  const verticalPadding = size.height < 560 ? 2.8 : 3.2;
+  const targetZoom = Math.max(
+    12,
+    Math.min(
+      size.width / Math.max(1, state.maze.width + horizontalPadding),
+      size.height / Math.max(1, state.maze.height + verticalPadding)
+    )
   );
-  const robotFocus = useMemo(
-    () => getCameraFocus(state.maze, state.position),
-    [state.maze, state.position]
-  );
-  const cameraFocus = useRef(levelFocus.clone());
-  const lastMazeKey = useRef(`${state.seed}:${state.maze.width}:${state.maze.height}`);
-  const distance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
-  const isCompact = size.width < 700;
-  const tutorialZoom = isCompact ? 32 : 44;
-  const openMazeZoom = isCompact
-    ? 38 + Math.min(10, Math.max(0, state.maze.width - 9) * 0.5)
-    : 54 + Math.min(12, Math.max(0, state.maze.width - 9) * 0.55);
-  const targetZoom = state.maze.width <= 9 ? tutorialZoom : openMazeZoom;
 
   useFrame(() => {
-    const mazeKey = `${state.seed}:${state.maze.width}:${state.maze.height}`;
-    const isNewMaze = lastMazeKey.current !== mazeKey;
-    if (isNewMaze) {
-      lastMazeKey.current = mazeKey;
-      cameraFocus.current.copy(levelFocus);
-    }
+    camera.position.set(0, distance, 0);
+    camera.up.set(0, 0, -1);
+    camera.lookAt(0, 0, 0);
 
-    const visibleWidth = size.width / Math.max(1, camera.zoom || targetZoom);
-    const visibleHeight = size.height / Math.max(1, camera.zoom || targetZoom);
-    const deadZoneX = Math.max(3.4, visibleWidth * 0.28);
-    const deadZoneZ = Math.max(2.8, visibleHeight * 0.24);
-    const desiredFocus = cameraFocus.current.clone();
-    const offsetX = robotFocus.x - cameraFocus.current.x;
-    const offsetZ = robotFocus.z - cameraFocus.current.z;
-
-    if (Math.abs(offsetX) > deadZoneX) {
-      desiredFocus.x = robotFocus.x - Math.sign(offsetX) * deadZoneX;
-    }
-
-    if (Math.abs(offsetZ) > deadZoneZ) {
-      desiredFocus.z = robotFocus.z - Math.sign(offsetZ) * deadZoneZ;
-    }
-
-    const focusSpeed =
-      state.executionStatus === "running"
-        ? 0.018
-        : state.executionStatus === "paused" || state.executionStatus === "stepping"
-          ? 0.055
-          : 0.035;
-    cameraFocus.current.lerp(desiredFocus, isNewMaze ? 1 : focusSpeed);
-
-    const desiredPosition = new THREE.Vector3(
-      cameraFocus.current.x,
-      distance * 1.35,
-      cameraFocus.current.z + distance * 0.62
-    );
-    camera.position.lerp(desiredPosition, isNewMaze ? 1 : 0.08);
-    camera.lookAt(camera.position.x, 0, camera.position.z - distance * 0.62);
-
-    if ("zoom" in camera) {
-      camera.zoom += (targetZoom - camera.zoom) * (isNewMaze ? 1 : 0.08);
+    if (camera instanceof THREE.OrthographicCamera && camera.zoom !== targetZoom) {
+      camera.zoom = targetZoom;
       camera.updateProjectionMatrix();
     }
   });
@@ -211,6 +174,61 @@ const getRobotCameraTargets = (
   return { eye, lookAt };
 };
 
+const getRobotLookTarget = (
+  eye: THREE.Vector3,
+  facing: Direction,
+  panAngle: number,
+  verticalPan: number
+): THREE.Vector3 => {
+  const forward = directionVectors[facing]
+    .clone()
+    .applyAxisAngle(WORLD_UP, panAngle);
+  const lookAt = eye.clone().add(forward.multiplyScalar(5.4));
+  lookAt.y = 0.34 + verticalPan;
+  return lookAt;
+};
+
+interface RobotCameraPan {
+  horizontal: number;
+  vertical: number;
+}
+
+const writeRobotCameraPan = (
+  camera: THREE.Camera,
+  pan: RobotCameraPan
+) => {
+  camera.userData.robotCameraPan = pan;
+};
+
+const readRobotCameraPan = (camera: THREE.Camera): RobotCameraPan => {
+  const value = camera.userData.robotCameraPan;
+
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof value.horizontal === "number" &&
+    typeof value.vertical === "number"
+  ) {
+    return value as RobotCameraPan;
+  }
+
+  return { horizontal: 0, vertical: 0 };
+};
+
+const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.isContentEditable
+  );
+};
+
 function RobotCameraRig({ state }: { state: GameState }) {
   const { camera } = useThree();
   const targets = useMemo(
@@ -219,20 +237,132 @@ function RobotCameraRig({ state }: { state: GameState }) {
   );
   const lookTarget = useRef(targets.lookAt.clone());
   const lastMazeKey = useRef(`${state.seed}:${state.maze.width}:${state.maze.height}`);
+  const lastFacing = useRef(state.facing);
+  const panAngle = useRef(0);
+  const verticalPan = useRef(0);
+  const panKeys = useRef({ left: false, right: false, up: false, down: false });
 
-  useFrame(() => {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        isEditableKeyboardTarget(event.target) ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        panKeys.current.left = true;
+        event.preventDefault();
+      }
+
+      if (event.key === "ArrowRight") {
+        panKeys.current.right = true;
+        event.preventDefault();
+      }
+
+      if (event.key === "ArrowUp") {
+        panKeys.current.up = true;
+        event.preventDefault();
+      }
+
+      if (event.key === "ArrowDown") {
+        panKeys.current.down = true;
+        event.preventDefault();
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") {
+        panKeys.current.left = false;
+      }
+
+      if (event.key === "ArrowRight") {
+        panKeys.current.right = false;
+      }
+
+      if (event.key === "ArrowUp") {
+        panKeys.current.up = false;
+      }
+
+      if (event.key === "ArrowDown") {
+        panKeys.current.down = false;
+      }
+    };
+
+    const resetPanKeys = () => {
+      panKeys.current.left = false;
+      panKeys.current.right = false;
+      panKeys.current.up = false;
+      panKeys.current.down = false;
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", resetPanKeys);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", resetPanKeys);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
     const mazeKey = `${state.seed}:${state.maze.width}:${state.maze.height}`;
     const isNewMaze = lastMazeKey.current !== mazeKey;
     if (isNewMaze) {
       lastMazeKey.current = mazeKey;
       camera.position.copy(targets.eye);
       lookTarget.current.copy(targets.lookAt);
+      panAngle.current = 0;
+      verticalPan.current = 0;
     }
+
+    if (lastFacing.current !== state.facing) {
+      lastFacing.current = state.facing;
+      panAngle.current *= 0.35;
+    }
+
+    const panInput =
+      (panKeys.current.left ? 1 : 0) - (panKeys.current.right ? 1 : 0);
+    const targetPan = panInput * ROBOT_CAMERA_MAX_PAN;
+    const panResponse =
+      panInput === 0 ? ROBOT_CAMERA_RECENTER_RESPONSE : ROBOT_CAMERA_PAN_RESPONSE;
+    panAngle.current = THREE.MathUtils.damp(
+      panAngle.current,
+      targetPan,
+      panResponse,
+      delta
+    );
+    const verticalInput =
+      (panKeys.current.up ? 1 : 0) - (panKeys.current.down ? 1 : 0);
+    const targetVerticalPan = verticalInput * ROBOT_CAMERA_MAX_VERTICAL_PAN;
+    const verticalResponse =
+      verticalInput === 0 ? ROBOT_CAMERA_RECENTER_RESPONSE : ROBOT_CAMERA_PAN_RESPONSE;
+    verticalPan.current = THREE.MathUtils.damp(
+      verticalPan.current,
+      targetVerticalPan,
+      verticalResponse,
+      delta
+    );
+    writeRobotCameraPan(camera, {
+      horizontal: panAngle.current,
+      vertical: verticalPan.current
+    });
 
     const followSpeed = state.executionStatus === "running" ? 0.11 : 0.18;
     const lookSpeed = state.executionStatus === "running" ? 0.13 : 0.22;
+    const pannedLookTarget = getRobotLookTarget(
+      targets.eye,
+      state.facing,
+      panAngle.current,
+      verticalPan.current
+    );
     camera.position.lerp(targets.eye, isNewMaze ? 1 : followSpeed);
-    lookTarget.current.lerp(targets.lookAt, isNewMaze ? 1 : lookSpeed);
+    lookTarget.current.lerp(pannedLookTarget, isNewMaze ? 1 : lookSpeed);
     camera.lookAt(lookTarget.current);
 
     if ("fov" in camera) {
@@ -275,11 +405,13 @@ function ReactorBackdrop({ state }: { state: GameState }) {
   const texture = useBackdropTexture();
   const mesh = useRef<THREE.Mesh>(null);
   const drift = useRef(new THREE.Vector2(0, 0));
+  const parallaxDrift = useRef(new THREE.Vector2(0, 0));
   const { camera, size } = useThree();
 
   useFrame(() => {
     if (!mesh.current) return;
 
+    const robotPan = readRobotCameraPan(camera);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
@@ -290,20 +422,40 @@ function ReactorBackdrop({ state }: { state: GameState }) {
     );
     const driftSpeed = state.executionStatus === "running" ? 0.024 : 0.08;
     drift.current.lerp(targetDrift, driftSpeed);
+    parallaxDrift.current.lerp(
+      new THREE.Vector2(
+        robotPan.horizontal * BACKDROP_HORIZONTAL_PARALLAX,
+        -robotPan.vertical * BACKDROP_VERTICAL_PARALLAX
+      ),
+      0.12
+    );
 
     mesh.current.position
       .copy(camera.position)
       .add(forward.multiplyScalar(BACKDROP_DISTANCE))
-      .add(right.multiplyScalar(drift.current.x))
-      .add(up.multiplyScalar(BACKDROP_VERTICAL_OFFSET + drift.current.y));
+      .add(right.multiplyScalar(drift.current.x + parallaxDrift.current.x))
+      .add(
+        up.multiplyScalar(
+          BACKDROP_VERTICAL_OFFSET + drift.current.y + parallaxDrift.current.y
+        )
+      );
+
     mesh.current.quaternion.copy(camera.quaternion);
 
     const fov =
       camera instanceof THREE.PerspectiveCamera
         ? THREE.MathUtils.degToRad(camera.fov)
         : THREE.MathUtils.degToRad(62);
-    const height = Math.tan(fov / 2) * BACKDROP_DISTANCE * 2.25;
-    const width = height * Math.max(1, size.width / Math.max(1, size.height));
+    const viewAspect = size.width / Math.max(1, size.height);
+    const imageAspect =
+      texture.image?.width && texture.image?.height
+        ? texture.image.width / texture.image.height
+        : BACKDROP_IMAGE_ASPECT_FALLBACK;
+    const frameHeight = Math.tan(fov / 2) * BACKDROP_DISTANCE * BACKDROP_VIEW_SCALE;
+    const frameWidth = frameHeight * viewAspect;
+    const height =
+      imageAspect >= viewAspect ? frameHeight : frameWidth / imageAspect;
+    const width = height * imageAspect;
     mesh.current.scale.set(width, height, 1);
   });
 
@@ -324,23 +476,14 @@ function ReactorBackdrop({ state }: { state: GameState }) {
   );
 }
 
-function FloorTile({
-  position,
-  variant,
-  texture
-}: {
-  position: [number, number, number];
-  variant: number;
-  texture: THREE.Texture;
-}) {
+function MazeFloor({ maze }: { maze: GameState["maze"] }) {
   return (
-    <mesh position={[position[0], -0.04, position[2]]} receiveShadow>
-      <boxGeometry args={[0.96, 0.05, 0.96]} />
+    <mesh position={[0, -0.065, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <planeGeometry args={[maze.width, maze.height]} />
       <meshStandardMaterial
-        map={texture}
-        color={variant % 2 === 0 ? "#d4e0e0" : "#bac7c8"}
-        roughness={0.9}
-        metalness={0.05}
+        color="#14212a"
+        roughness={0.86}
+        metalness={0.04}
       />
     </mesh>
   );
@@ -348,10 +491,12 @@ function FloorTile({
 
 function WallBlock({
   position,
-  texture
+  texture,
+  topTexture
 }: {
   position: [number, number, number];
   texture: THREE.Texture;
+  topTexture: THREE.Texture;
 }) {
   return (
     <group position={[position[0], 0.48, position[2]]}>
@@ -367,8 +512,8 @@ function WallBlock({
       <mesh position={[0, 0.52, 0]}>
         <boxGeometry args={[0.88, 0.07, 0.88]} />
         <meshStandardMaterial
-          map={texture}
-          color="#ffffff"
+          map={topTexture}
+          color="#dbe9e8"
           roughness={0.7}
           metalness={0.08}
         />
@@ -379,43 +524,96 @@ function WallBlock({
 
 function HotspotMarker({ maze, hotspot }: { maze: GameState["maze"]; hotspot: Hotspot }) {
   const group = useRef<THREE.Group>(null);
+  const aura = useRef<THREE.Mesh>(null);
   const position = toWorld(maze, hotspot.position);
 
   useFrame(({ clock }) => {
-    if (!group.current || hotspot.sealed) return;
-    const pulse = 1 + Math.sin(clock.elapsedTime * 4) * 0.08;
-    group.current.scale.setScalar(pulse);
+    if (hotspot.sealed) return;
+
+    const pulse = 1 + Math.sin(clock.elapsedTime * 4.2) * 0.045;
+    if (group.current) {
+      group.current.scale.setScalar(pulse);
+    }
+
+    if (aura.current) {
+      const auraPulse = 1.06 + Math.sin(clock.elapsedTime * 2.4) * 0.08;
+      aura.current.scale.setScalar(auraPulse);
+    }
   });
 
   if (hotspot.sealed) {
     return (
-      <group position={[position[0], 0.04, position[2]]}>
+      <group position={[position[0], 0.035, position[2]]}>
         <mesh>
-          <cylinderGeometry args={[0.38, 0.42, 0.08, 20]} />
-          <meshStandardMaterial color="#d9fff2" roughness={0.52} />
+          <cylinderGeometry args={[0.42, 0.46, 0.08, 18]} />
+          <meshStandardMaterial
+            color="#d9fff2"
+            roughness={0.58}
+            metalness={0.02}
+          />
         </mesh>
-        <mesh position={[0.12, 0.08, -0.04]}>
+        <mesh position={[0.11, 0.08, -0.05]}>
           <sphereGeometry args={[0.13, 12, 8]} />
-          <meshStandardMaterial color="#b8f5e4" roughness={0.4} />
+          <meshStandardMaterial
+            color="#b8f5e4"
+            emissive="#75e6d0"
+            emissiveIntensity={0.12}
+            roughness={0.42}
+          />
+        </mesh>
+        <mesh position={[-0.13, 0.075, 0.07]}>
+          <sphereGeometry args={[0.09, 10, 8]} />
+          <meshStandardMaterial color="#f0fffb" roughness={0.5} />
         </mesh>
       </group>
     );
   }
 
   return (
-    <group ref={group} position={[position[0], 0.1, position[2]]}>
-      <mesh>
-        <cylinderGeometry args={[0.32, 0.42, 0.12, 6]} />
+    <group ref={group} position={[position[0], 0.005, position[2]]}>
+      <mesh receiveShadow>
+        <cylinderGeometry args={[0.48, 0.42, 0.08, 6]} />
         <meshStandardMaterial
-          color="#ffb020"
-          emissive="#ff4d2e"
-          emissiveIntensity={0.75}
+          color="#142816"
+          emissive="#0f8f45"
+          emissiveIntensity={0.3}
+          roughness={0.68}
+          metalness={0.16}
+        />
+      </mesh>
+      <mesh position={[0, 0.028, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.42, 0.025, 8, 36]} />
+        <meshStandardMaterial
+          color="#c8f55f"
+          emissive="#58e96b"
+          emissiveIntensity={0.85}
           roughness={0.35}
         />
       </mesh>
-      <mesh position={[0, 0.1, 0]}>
-        <torusGeometry args={[0.36, 0.025, 8, 24]} />
-        <meshStandardMaterial color="#ffd166" emissive="#ff9f1c" emissiveIntensity={0.45} />
+      {RADIATION_BLADE_ANGLES.map((angle) => (
+        <mesh
+          key={angle}
+          position={[Math.sin(angle) * 0.16, 0.05, Math.cos(angle) * 0.16]}
+          rotation={[-Math.PI / 2, 0, -angle]}
+        >
+          <circleGeometry args={[0.17, 3]} />
+          <meshStandardMaterial
+            color="#b6f34a"
+            emissive="#39ff88"
+            emissiveIntensity={0.95}
+            roughness={0.42}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      <mesh ref={aura} position={[0, 0.12, 0]}>
+        <sphereGeometry args={[0.44, 18, 12]} />
+        <meshBasicMaterial
+          color="#39ff88"
+          depthWrite={false}
+          opacity={0.14}
+          transparent
+        />
       </mesh>
     </group>
   );
@@ -559,19 +757,14 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
 
 function MazeScene({ state, viewMode }: GameSceneProps) {
   const wallTextures = useWallTextures();
-  const floorTexture = useFloorTexture();
-  const cameraDistance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
-  const cameraFocus = useMemo(
-    () => getCameraFocus(state.maze, state.maze.start),
-    [state.maze]
-  );
-  const initialCameraPosition = useMemo<[number, number, number]>(
+  const wallTopTexture = useWallTopTexture();
+  const initialOverheadPosition = useMemo<[number, number, number]>(
     () => [
-      cameraFocus.x,
-      cameraDistance * 1.35,
-      cameraFocus.z + cameraDistance * 0.62
+      0,
+      Math.max(18, Math.max(state.maze.width, state.maze.height) * 2.2),
+      0
     ],
-    [cameraDistance, cameraFocus.x, cameraFocus.z]
+    [state.maze.height, state.maze.width]
   );
   const initialRobotCamera = useMemo(
     () => getRobotCameraTargets(state.maze, state.position, state.facing),
@@ -593,7 +786,8 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
           <OrthographicCamera
             key={`${state.seed}-overhead`}
             makeDefault
-            position={initialCameraPosition}
+            position={initialOverheadPosition}
+            up={[0, 0, -1]}
             zoom={42}
             near={0.1}
             far={100}
@@ -624,7 +818,12 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
-      <ServicePipes maze={state.maze} />
+      {viewMode === "robot" ? (
+        <>
+          <MazeFloor maze={state.maze} />
+          <ServicePipes maze={state.maze} />
+        </>
+      ) : null}
       {state.maze.cells.flatMap((row) =>
         row.map((cell) => {
           const world = toWorld(state.maze, { x: cell.x, y: cell.y });
@@ -633,22 +832,16 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
               key={`${cell.x}-${cell.y}`}
               position={world}
               texture={wallTextures[getWallTextureIndex(state.seed, cell.x, cell.y)]}
+              topTexture={wallTopTexture}
             />
-          ) : (
-            <FloorTile
-              key={`${cell.x}-${cell.y}`}
-              position={world}
-              variant={cell.x + cell.y}
-              texture={floorTexture}
-            />
-          );
+          ) : null;
         })
       )}
       <ExtractionPlatform maze={state.maze} position={state.maze.extraction} />
       {state.hotspots.map((hotspot) => (
         <HotspotMarker key={hotspot.id} maze={state.maze} hotspot={hotspot} />
       ))}
-      <SensorHint state={state} />
+      {viewMode === "robot" ? <SensorHint state={state} /> : null}
       {viewMode === "overhead" ? <RobotModel state={state} /> : null}
     </>
   );

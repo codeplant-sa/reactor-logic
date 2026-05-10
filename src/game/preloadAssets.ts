@@ -36,7 +36,7 @@ const steps: PreloadStep[] = [
     load: () => preloadImage(codeplantLogoUrl)
   },
   {
-    label: "Loading reactor floor, wall, and backdrop textures",
+    label: "Loading reactor wall, wall-cap, and backdrop textures",
     load: async () => {
       await Promise.all([
         preloadImage(floorTextureUrl),

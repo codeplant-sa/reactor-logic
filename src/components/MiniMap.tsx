@@ -12,16 +12,25 @@ const hasPosition = (items: Position[], position: Position): boolean =>
 
 export default function MiniMap({ state, compact = false }: MiniMapProps) {
   const trace = new Set(state.pathTrace.map(positionKey));
+  const seedLabel = compact
+    ? `L${state.level}`
+    : `${state.maze.width} x ${state.maze.height}`;
 
   return (
     <section
       className={`minimap-panel ${compact ? "compact" : ""}`}
       aria-label="Mission minimap"
     >
-      <div className="panel-heading">
+      <div className="panel-heading minimap-heading">
         <span>Minimap</span>
-        <small>{compact ? `L${state.level}` : `Seed ${state.seed}`}</small>
+        <small>{seedLabel}</small>
       </div>
+      {!compact ? (
+        <div className="minimap-meta">
+          <span>Level {state.level}</span>
+          <span title={state.seed}>Seed {state.seed}</span>
+        </div>
+      ) : null}
       <div
         className="minimap"
         style={{
@@ -57,10 +66,41 @@ export default function MiniMap({ state, compact = false }: MiniMapProps) {
         )}
       </div>
       <div className="minimap-legend">
-        <span className="legend robot-dot">Robot</span>
-        <span className="legend hotspot-dot">Hotspot</span>
-        <span className="legend sealed-dot">Sealed</span>
-        <span className="legend exit-dot">Exit</span>
+        <span className="legend robot-dot">
+          <span className="legend-marker" />
+          <span className="legend-copy">
+            <strong>Robot</strong>
+            <small>heading</small>
+          </span>
+        </span>
+        <span className="legend hotspot-dot">
+          <span className="legend-marker" />
+          <span className="legend-copy">
+            <strong>Radiation</strong>
+            <small>seal</small>
+          </span>
+        </span>
+        <span className="legend sealed-dot">
+          <span className="legend-marker" />
+          <span className="legend-copy">
+            <strong>Sealed</strong>
+            <small>safe</small>
+          </span>
+        </span>
+        <span className="legend exit-dot">
+          <span className="legend-marker" />
+          <span className="legend-copy">
+            <strong>Extract</strong>
+            <small>finish</small>
+          </span>
+        </span>
+        <span className="legend path-dot">
+          <span className="legend-marker" />
+          <span className="legend-copy">
+            <strong>Trail</strong>
+            <small>visited</small>
+          </span>
+        </span>
       </div>
     </section>
   );

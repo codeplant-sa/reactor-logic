@@ -5,7 +5,7 @@ Expandable React, TypeScript, and Three.js browser game prototype for teaching b
 ## Gameplay
 
 Program a response robot through a compromised fictional coastal research reactor maze. The player chooses a robot, assembles command blocks, previews Python-like pseudocode, then runs or steps through the program to seal stabilizing-foam hotspots and reach extraction before the turn-based meltdown timer expires. The first three levels are fixed training missions with reference solutions that introduce sequence, repeat/if logic, then procedure and while patterns.
-After level 3 is completed, the browser stores training completion in `localStorage` and future robot runs start at level 4, where generated levels begin.
+After level 3 is completed, the browser stores training completion in `localStorage` and future robot runs start at level 4, where generated levels begin. Players can also persist `Disable training levels (1-3)` in `localStorage` to start new runs at generated levels immediately.
 
 ![Robot selection and mission briefing](docs/screenshots/intro.png)
 

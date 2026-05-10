@@ -69,6 +69,7 @@ const START_FACING_PREFERENCE: Direction[] = ["east", "south", "north", "west"];
 const TRAINING_LEVEL_COUNT = 3;
 const FIRST_GENERATED_LEVEL = TRAINING_LEVEL_COUNT + 1;
 const TRAINING_COMPLETE_STORAGE_KEY = "reactor-logic.training-complete";
+const TRAINING_DISABLED_STORAGE_KEY = "reactor-logic.training-disabled";
 
 const readTrainingComplete = (): boolean => {
   try {
@@ -86,8 +87,27 @@ const writeTrainingComplete = () => {
   }
 };
 
+const readTrainingDisabled = (): boolean => {
+  try {
+    return window.localStorage.getItem(TRAINING_DISABLED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
+const writeTrainingDisabled = (disabled: boolean) => {
+  try {
+    window.localStorage.setItem(
+      TRAINING_DISABLED_STORAGE_KEY,
+      disabled ? "true" : "false"
+    );
+  } catch {
+    // Local storage can be unavailable in private browsing or locked-down embeds.
+  }
+};
+
 const getStartingLevel = (): number =>
-  readTrainingComplete() ? FIRST_GENERATED_LEVEL : 1;
+  readTrainingComplete() || readTrainingDisabled() ? FIRST_GENERATED_LEVEL : 1;
 
 const chooseStartFacing = (maze: GameState["maze"]): Direction =>
   START_FACING_PREFERENCE.find(
@@ -480,6 +500,7 @@ export default function App() {
   const [selectedRobot, setSelectedRobot] = useState<RobotConfig | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
   const [trainingComplete, setTrainingComplete] = useState(readTrainingComplete);
+  const [trainingDisabled, setTrainingDisabled] = useState(readTrainingDisabled);
   const [assetsReady, setAssetsReady] = useState(false);
   const [briefingEntered, setBriefingEntered] = useState(false);
   const [preloadProgress, setPreloadProgress] = useState<PreloadProgress>({
@@ -501,6 +522,13 @@ export default function App() {
 
   const resetRuntime = () => {
     runtimeRef.current = null;
+  };
+
+  const skipTrainingLevels = trainingComplete || trainingDisabled;
+
+  const updateTrainingDisabled = (disabled: boolean) => {
+    writeTrainingDisabled(disabled);
+    setTrainingDisabled(disabled);
   };
 
   useEffect(() => {
@@ -603,7 +631,7 @@ export default function App() {
     if (
       !trainingComplete &&
       game?.executionStatus === "success" &&
-      game.level >= TRAINING_LEVEL_COUNT
+      game.level === TRAINING_LEVEL_COUNT
     ) {
       writeTrainingComplete();
       setTrainingComplete(true);
@@ -656,7 +684,10 @@ export default function App() {
 
   const newLevel = () => {
     if (!selectedRobot) return;
-    const nextLevel = level + 1;
+    const nextLevel =
+      skipTrainingLevels && level < FIRST_GENERATED_LEVEL
+        ? FIRST_GENERATED_LEVEL
+        : level + 1;
     const created = createGameState(selectedRobot, nextLevel);
     resetRuntime();
     setLevel(nextLevel);
@@ -666,7 +697,11 @@ export default function App() {
 
   const loadSeed = () => {
     if (!selectedRobot) return;
-    beginMission(selectedRobot, level, seedDraft);
+    const targetLevel =
+      skipTrainingLevels && level < FIRST_GENERATED_LEVEL
+        ? FIRST_GENERATED_LEVEL
+        : level;
+    beginMission(selectedRobot, targetLevel, seedDraft);
   };
 
   const loadTrainingProgram = () => {
@@ -783,7 +818,7 @@ export default function App() {
             onSelect={(robot) =>
               beginMission(
                 robot,
-                trainingComplete ? FIRST_GENERATED_LEVEL : 1
+                skipTrainingLevels ? FIRST_GENERATED_LEVEL : 1
               )
             }
           />
@@ -946,6 +981,16 @@ export default function App() {
                     New level
                   </button>
                 </div>
+                <label className="training-skip-setting tray-setting">
+                  <input
+                    type="checkbox"
+                    checked={trainingDisabled}
+                    onChange={(event) =>
+                      updateTrainingDisabled(event.currentTarget.checked)
+                    }
+                  />
+                  <span>Disable training levels (1-3)</span>
+                </label>
                 <div className="seed-row tray-seed-row">
                   <label>
                     Seed
