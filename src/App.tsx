@@ -68,8 +68,123 @@ const GITHUB_REPO_URL = "https://github.com/codeplant-sa/reactor-logic";
 const START_FACING_PREFERENCE: Direction[] = ["east", "south", "north", "west"];
 const TRAINING_LEVEL_COUNT = 3;
 const FIRST_GENERATED_LEVEL = TRAINING_LEVEL_COUNT + 1;
+const VICTORY_SUMMARY_DELAY_MS = 1800;
+const LEVEL_TRANSITION_DELAY_MS = 1450;
 const TRAINING_COMPLETE_STORAGE_KEY = "reactor-logic.training-complete";
 const TRAINING_DISABLED_STORAGE_KEY = "reactor-logic.training-disabled";
+const COPILOT_FLOAT_STORAGE_KEY = "reactor-logic.copilot-float";
+const COPILOT_FLOAT_MARGIN = 12;
+const COPILOT_FLOAT_WIDTH = 390;
+const COPILOT_FLOAT_DEFAULT_HEIGHT = 340;
+const COPILOT_FLOAT_MIN_VISIBLE_HEIGHT = 160;
+
+interface CopilotFloatState {
+  x: number;
+  y: number;
+  pinned: boolean;
+}
+
+const getCopilotPanelWidth = (): number => {
+  if (typeof window === "undefined") return COPILOT_FLOAT_WIDTH;
+  return Math.min(
+    COPILOT_FLOAT_WIDTH,
+    Math.max(0, window.innerWidth - COPILOT_FLOAT_MARGIN * 2)
+  );
+};
+
+const getDefaultCopilotFloatState = (): CopilotFloatState => {
+  if (typeof window === "undefined") {
+    return { x: COPILOT_FLOAT_MARGIN, y: 220, pinned: false };
+  }
+
+  const estimatedHeight = Math.min(
+    COPILOT_FLOAT_DEFAULT_HEIGHT,
+    Math.max(COPILOT_FLOAT_MIN_VISIBLE_HEIGHT, window.innerHeight * 0.62)
+  );
+
+  return {
+    x: COPILOT_FLOAT_MARGIN,
+    y: Math.max(
+      COPILOT_FLOAT_MARGIN,
+      window.innerHeight - estimatedHeight - 64
+    ),
+    pinned: false
+  };
+};
+
+const clampCopilotFloatState = (
+  state: CopilotFloatState
+): CopilotFloatState => {
+  if (typeof window === "undefined") return state;
+
+  const panelWidth = getCopilotPanelWidth();
+  const maxX = Math.max(
+    COPILOT_FLOAT_MARGIN,
+    window.innerWidth - panelWidth - COPILOT_FLOAT_MARGIN
+  );
+  const maxY = Math.max(
+    COPILOT_FLOAT_MARGIN,
+    window.innerHeight - COPILOT_FLOAT_MIN_VISIBLE_HEIGHT - COPILOT_FLOAT_MARGIN
+  );
+
+  return {
+    ...state,
+    x: Math.min(Math.max(state.x, COPILOT_FLOAT_MARGIN), maxX),
+    y: Math.min(Math.max(state.y, COPILOT_FLOAT_MARGIN), maxY)
+  };
+};
+
+const getCopilotPanelMaxHeight = (y: number): number => {
+  if (typeof window === "undefined") return 540;
+
+  return Math.min(
+    540,
+    Math.max(
+      COPILOT_FLOAT_MIN_VISIBLE_HEIGHT,
+      window.innerHeight - y - COPILOT_FLOAT_MARGIN
+    ),
+    Math.max(COPILOT_FLOAT_MIN_VISIBLE_HEIGHT, window.innerHeight * 0.72)
+  );
+};
+
+const readCopilotFloatState = (): CopilotFloatState => {
+  const fallback = getDefaultCopilotFloatState();
+
+  try {
+    const raw = window.localStorage.getItem(COPILOT_FLOAT_STORAGE_KEY);
+    if (!raw) return fallback;
+
+    const parsed = JSON.parse(raw) as Partial<CopilotFloatState>;
+    const x = parsed.x;
+    const y = parsed.y;
+    if (typeof x !== "number" || typeof y !== "number") {
+      return fallback;
+    }
+
+    return clampCopilotFloatState({
+      x,
+      y,
+      pinned: parsed.pinned === true
+    });
+  } catch {
+    return fallback;
+  }
+};
+
+const writeCopilotFloatState = (state: CopilotFloatState) => {
+  try {
+    window.localStorage.setItem(
+      COPILOT_FLOAT_STORAGE_KEY,
+      JSON.stringify({
+        x: Math.round(state.x),
+        y: Math.round(state.y),
+        pinned: state.pinned
+      })
+    );
+  } catch {
+    // Local storage can be unavailable in private browsing or locked-down embeds.
+  }
+};
 
 const readTrainingComplete = (): boolean => {
   try {
@@ -389,11 +504,13 @@ const readCopilotError = (payload: unknown): string | undefined => {
 function MissionSummaryModal({
   state,
   onContinue,
-  onQuit
+  onQuit,
+  transitioning = false
 }: {
   state: GameState;
   onContinue: () => void;
   onQuit: () => void;
+  transitioning?: boolean;
 }) {
   if (state.executionStatus !== "success") {
     return null;
@@ -456,11 +573,21 @@ function MissionSummaryModal({
           </div>
         </dl>
         <div className="summary-actions">
-          <button type="button" className="secondary-action" onClick={onQuit}>
+          <button
+            type="button"
+            className="secondary-action"
+            disabled={transitioning}
+            onClick={onQuit}
+          >
             Quit
           </button>
-          <button type="button" className="primary-action" onClick={onContinue}>
-            Continue
+          <button
+            type="button"
+            className="primary-action"
+            disabled={transitioning}
+            onClick={onContinue}
+          >
+            {transitioning ? "Loading" : "Continue"}
           </button>
         </div>
       </section>
@@ -513,15 +640,34 @@ export default function App() {
   const [seedDraft, setSeedDraft] = useState("");
   const [trayOpen, setTrayOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [copilotFloat, setCopilotFloat] = useState(readCopilotFloatState);
+  const [showMissionSummary, setShowMissionSummary] = useState(false);
+  const [levelTransitionLabel, setLevelTransitionLabel] = useState<string | null>(
+    null
+  );
   const [mapPinned, setMapPinned] = useState(true);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("robot");
   const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
   const [paletteAddRequest, setPaletteAddRequest] =
     useState<PaletteAddRequest | null>(null);
   const runtimeRef = useRef<ExecutionRuntime | null>(null);
+  const levelTransitionTimerRef = useRef<number | null>(null);
+  const copilotPanelRef = useRef<HTMLElement | null>(null);
+  const copilotDragRef = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
 
   const resetRuntime = () => {
     runtimeRef.current = null;
+  };
+
+  const clearLevelTransitionTimer = () => {
+    if (levelTransitionTimerRef.current !== null) {
+      window.clearTimeout(levelTransitionTimerRef.current);
+      levelTransitionTimerRef.current = null;
+    }
   };
 
   const skipTrainingLevels = trainingComplete || trainingDisabled;
@@ -557,7 +703,17 @@ export default function App() {
     };
   }, []);
 
+  useEffect(
+    () => () => {
+      clearLevelTransitionTimer();
+    },
+    []
+  );
+
   const beginMission = (robot: RobotConfig, nextLevel = level, seed?: string) => {
+    clearLevelTransitionTimer();
+    setLevelTransitionLabel(null);
+    setShowMissionSummary(false);
     resetRuntime();
     const created = createGameState(robot, nextLevel, seed);
     stopIntroMusic();
@@ -638,6 +794,20 @@ export default function App() {
     }
   }, [game?.executionStatus, game?.level, trainingComplete]);
 
+  useEffect(() => {
+    if (game?.executionStatus !== "success") {
+      setShowMissionSummary(false);
+      return undefined;
+    }
+
+    setShowMissionSummary(false);
+    const timer = window.setTimeout(() => {
+      setShowMissionSummary(true);
+    }, VICTORY_SUMMARY_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [game?.executionStatus, game?.level, game?.seed]);
+
   const handleProgramChange = (program: ProgramBlock[]) => {
     resetRuntime();
     setGame((previous) =>
@@ -656,6 +826,9 @@ export default function App() {
 
   const resetRobot = (programOverride?: ProgramBlock[]) => {
     if (!game) return;
+    clearLevelTransitionTimer();
+    setLevelTransitionLabel(null);
+    setShowMissionSummary(false);
     resetRuntime();
     const program = programOverride ?? game.program;
     const reset = createGameState(game.robot, game.level, game.seed, program);
@@ -665,6 +838,9 @@ export default function App() {
 
   const resetLevel = () => {
     if (!game) return;
+    clearLevelTransitionTimer();
+    setLevelTransitionLabel(null);
+    setShowMissionSummary(false);
     resetRuntime();
     const reset = createGameState(game.robot, game.level, game.seed, []);
     setGame(reset);
@@ -672,6 +848,9 @@ export default function App() {
   };
 
   const quitMission = () => {
+    clearLevelTransitionTimer();
+    setLevelTransitionLabel(null);
+    setShowMissionSummary(false);
     setSelectedRobot(null);
     setGame(null);
     setTrayOpen(false);
@@ -683,16 +862,30 @@ export default function App() {
   };
 
   const newLevel = () => {
-    if (!selectedRobot) return;
+    if (
+      !selectedRobot ||
+      levelTransitionLabel ||
+      levelTransitionTimerRef.current !== null
+    ) {
+      return;
+    }
     const nextLevel =
       skipTrainingLevels && level < FIRST_GENERATED_LEVEL
         ? FIRST_GENERATED_LEVEL
         : level + 1;
-    const created = createGameState(selectedRobot, nextLevel);
     resetRuntime();
-    setLevel(nextLevel);
-    setGame(created);
-    setSeedDraft(created.seed);
+    setShowMissionSummary(false);
+    setLevelTransitionLabel(`Loading level ${nextLevel}`);
+    clearLevelTransitionTimer();
+    levelTransitionTimerRef.current = window.setTimeout(() => {
+      const created = createGameState(selectedRobot, nextLevel);
+      resetRuntime();
+      setLevel(nextLevel);
+      setGame(created);
+      setSeedDraft(created.seed);
+      setLevelTransitionLabel(null);
+      levelTransitionTimerRef.current = null;
+    }, LEVEL_TRANSITION_DELAY_MS);
   };
 
   const loadSeed = () => {
@@ -768,6 +961,118 @@ export default function App() {
     [game]
   );
 
+  const updateCopilotPinned = useCallback((pinned: boolean) => {
+    setCopilotFloat((previous) => {
+      const next = clampCopilotFloatState({ ...previous, pinned });
+      writeCopilotFloatState(next);
+      return next;
+    });
+  }, []);
+
+  const beginCopilotDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || copilotFloat.pinned) return;
+
+      const panel = copilotPanelRef.current;
+      if (!panel) return;
+
+      const rect = panel.getBoundingClientRect();
+      copilotDragRef.current = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    [copilotFloat.pinned]
+  );
+
+  const moveCopilotDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = copilotDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      const nextX = event.clientX - drag.offsetX;
+      const nextY = event.clientY - drag.offsetY;
+      setCopilotFloat((previous) =>
+        clampCopilotFloatState({ ...previous, x: nextX, y: nextY })
+      );
+      event.preventDefault();
+    },
+    []
+  );
+
+  const finishCopilotDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = copilotDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      copilotDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      setCopilotFloat((previous) => {
+        const next = clampCopilotFloatState(previous);
+        writeCopilotFloatState(next);
+        return next;
+      });
+    },
+    []
+  );
+
+  const nudgeCopilot = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (copilotFloat.pinned) return;
+
+      const step = event.shiftKey ? 32 : 12;
+      const movement: Record<string, [number, number]> = {
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0]
+      };
+      const delta = movement[event.key];
+      if (!delta) return;
+
+      event.preventDefault();
+      setCopilotFloat((previous) => {
+        const next = clampCopilotFloatState({
+          ...previous,
+          x: previous.x + delta[0],
+          y: previous.y + delta[1]
+        });
+        writeCopilotFloatState(next);
+        return next;
+      });
+    },
+    [copilotFloat.pinned]
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setCopilotFloat((previous) => {
+        const next = clampCopilotFloatState(previous);
+        writeCopilotFloatState(next);
+        return next;
+      });
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!copilotOpen) return;
+
+    setCopilotFloat((previous) => {
+      const next = clampCopilotFloatState(previous);
+      writeCopilotFloatState(next);
+      return next;
+    });
+  }, [copilotOpen]);
+
   const canRun = useMemo(
     () =>
       Boolean(
@@ -787,6 +1092,17 @@ export default function App() {
     setGame((previous) =>
       previous ? { ...previous, executionStatus: "running" } : previous
     );
+  };
+
+  const copilotPanelHeight = Math.round(
+    getCopilotPanelMaxHeight(copilotFloat.y)
+  );
+  const copilotDrawerStyle: React.CSSProperties & {
+    "--copilot-panel-height": string;
+  } = {
+    left: Math.round(copilotFloat.x),
+    top: Math.round(copilotFloat.y),
+    "--copilot-panel-height": `${copilotPanelHeight}px`
   };
 
   if (!assetsReady || !briefingEntered) {
@@ -976,7 +1292,11 @@ export default function App() {
                     <RefreshCw size={15} />
                     Reset level
                   </button>
-                  <button type="button" onClick={newLevel}>
+                  <button
+                    type="button"
+                    disabled={Boolean(levelTransitionLabel)}
+                    onClick={newLevel}
+                  >
                     <Shuffle size={15} />
                     New level
                   </button>
@@ -1027,13 +1347,30 @@ export default function App() {
       </aside>
       <aside
         id="ai-copilot-drawer"
-        className={`copilot-drawer ${copilotOpen ? "open" : ""}`}
+        ref={copilotPanelRef}
+        className={`copilot-drawer ${copilotOpen ? "open" : ""} ${
+          copilotFloat.pinned ? "pinned" : ""
+        }`}
+        style={copilotDrawerStyle}
         aria-hidden={!copilotOpen}
       >
         <AiCopilot
           disabled={game.executionStatus === "running"}
+          pinned={copilotFloat.pinned}
+          onPinnedChange={updateCopilotPinned}
           onAsk={askCopilot}
           onClose={() => setCopilotOpen(false)}
+          dragHandleProps={{
+            onPointerDown: beginCopilotDrag,
+            onPointerMove: moveCopilotDrag,
+            onPointerUp: finishCopilotDrag,
+            onPointerCancel: finishCopilotDrag,
+            onKeyDown: nudgeCopilot,
+            tabIndex: copilotFloat.pinned ? -1 : 0,
+            "aria-label": copilotFloat.pinned
+              ? "AI Copilot position pinned"
+              : "Drag AI Copilot"
+          }}
         />
       </aside>
       <aside className="side-panel">
@@ -1061,11 +1398,30 @@ export default function App() {
           />
         </div>
       </aside>
-      <MissionSummaryModal
-        state={game}
-        onContinue={newLevel}
-        onQuit={quitMission}
-      />
+      <div
+        className={`level-transition-overlay ${
+          levelTransitionLabel ? "active" : ""
+        }`}
+        aria-hidden={!levelTransitionLabel}
+      >
+        <div className="level-transition-panel" role="status" aria-live="polite">
+          <span>System handoff</span>
+          <strong>{levelTransitionLabel ?? "Loading level"}</strong>
+          <div className="level-loading-bars" aria-hidden>
+            <i />
+            <i />
+            <i />
+          </div>
+        </div>
+      </div>
+      {showMissionSummary ? (
+        <MissionSummaryModal
+          state={game}
+          onContinue={newLevel}
+          onQuit={quitMission}
+          transitioning={Boolean(levelTransitionLabel)}
+        />
+      ) : null}
     </main>
   );
 }

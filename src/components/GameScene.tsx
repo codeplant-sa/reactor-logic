@@ -3,6 +3,9 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera, PerspectiveCamera, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import floorTextureUrl from "../../public/images/floor1.jpg";
+import labWallTextureUrl from "../../public/images/lab1.jpg";
+import labWallTextureTwoUrl from "../../public/images/lab2.jpg";
+import officeWallTextureUrl from "../../public/images/office1.jpg";
 import wallTextureOneUrl from "../../public/images/wall1.jpg";
 import wallTextureTwoUrl from "../../public/images/wall2.jpg";
 import wallTextureFiveUrl from "../../public/images/wall5.jpg";
@@ -36,13 +39,24 @@ const ROBOT_CAMERA_MAX_VERTICAL_PAN = 0.58;
 const ROBOT_CAMERA_PAN_RESPONSE = 9;
 const ROBOT_CAMERA_RECENTER_RESPONSE = 5.5;
 const RADIATION_BLADE_ANGLES = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3];
+const REACTOR_ROOF_START_LEVEL = 4;
 
-const WALL_TEXTURE_PATHS = [
+const REACTOR_WALL_TEXTURE_PATHS = [
   wallTextureOneUrl,
   wallTextureTwoUrl,
   wallTextureFiveUrl
 ];
+const WALL_TEXTURE_PATHS = [
+  ...REACTOR_WALL_TEXTURE_PATHS,
+  labWallTextureUrl,
+  labWallTextureTwoUrl,
+  officeWallTextureUrl
+];
 const WALL_TOP_TEXTURE_PATH = floorTextureUrl;
+const LAB_ROOF_HEIGHT = 3.35;
+const LAB_ROOF_PADDING = 8;
+const LAB_ROOF_PANEL_SPACING = 2.4;
+const OFFICE_BACKGROUND_REPEAT = 3;
 const DOME_BASE_HEIGHT = 1.28;
 const DOME_CAP_HEIGHT = 11.4;
 const DOME_MIN_RADIUS = 19;
@@ -111,7 +125,30 @@ const getWallTextureIndex = (seed: string, x: number, y: number): 0 | 1 | 2 => {
   return bucket === 5 ? 1 : 0;
 };
 
-function useWallTextures() {
+const getLabTwoWallKeys = (state: GameState): Set<string> => {
+  const wallCells = state.maze.cells
+    .flatMap((row) => row.filter((cell) => cell.wall))
+    .sort(
+      (first, second) =>
+        hashWallCell(`${state.seed}:lab2`, first.x, first.y) -
+        hashWallCell(`${state.seed}:lab2`, second.x, second.y)
+    );
+  const labTwoCount = Math.ceil(wallCells.length * 0.5);
+
+  return new Set(
+    wallCells
+      .slice(0, labTwoCount)
+      .map((cell) => `${cell.x},${cell.y}`)
+  );
+};
+
+interface WallTextureSet {
+  reactor: [THREE.Texture, THREE.Texture, THREE.Texture];
+  lab: [THREE.Texture, THREE.Texture];
+  office: THREE.Texture;
+}
+
+function useWallTextures(): WallTextureSet {
   const textures = useTexture(WALL_TEXTURE_PATHS);
 
   return useMemo(() => {
@@ -124,7 +161,11 @@ function useWallTextures() {
       texture.needsUpdate = true;
     });
 
-    return textures;
+    return {
+      reactor: [textures[0], textures[1], textures[2]],
+      lab: [textures[3], textures[4]],
+      office: textures[5]
+    };
   }, [textures]);
 }
 
@@ -140,6 +181,33 @@ function useWallTopTexture() {
     texture.needsUpdate = true;
     return texture;
   }, [texture]);
+}
+
+function SceneBackground({ useOfficeTexture }: { useOfficeTexture: boolean }) {
+  const sourceTexture = useTexture(officeWallTextureUrl);
+  const officeBackgroundTexture = useMemo(() => {
+    const texture = sourceTexture.clone();
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(OFFICE_BACKGROUND_REPEAT, OFFICE_BACKGROUND_REPEAT);
+    texture.anisotropy = 4;
+    texture.needsUpdate = true;
+    return texture;
+  }, [sourceTexture]);
+
+  useEffect(
+    () => () => {
+      officeBackgroundTexture.dispose();
+    },
+    [officeBackgroundTexture]
+  );
+
+  return useOfficeTexture ? (
+    <primitive attach="background" object={officeBackgroundTexture} />
+  ) : (
+    <color attach="background" args={["#243342"]} />
+  );
 }
 
 function OverheadCameraRig({ state }: { state: GameState }) {
@@ -1354,10 +1422,10 @@ function ReactorDome({ state }: { state: GameState }) {
     <group>
       <mesh geometry={openingGeometry} renderOrder={-34}>
         <meshBasicMaterial
-          color="#7f98a2"
+          color="#9eb8c2"
           depthWrite={false}
           fog={false}
-          opacity={0.32}
+          opacity={0.38}
           side={THREE.DoubleSide}
           toneMapped={false}
           transparent
@@ -1365,10 +1433,10 @@ function ReactorDome({ state }: { state: GameState }) {
       </mesh>
       <mesh geometry={domeGeometry} renderOrder={-30}>
         <meshBasicMaterial
-          color="#243235"
+          color="#3d535a"
           depthWrite={false}
           fog={false}
-          opacity={0.94}
+          opacity={0.9}
           side={THREE.DoubleSide}
           toneMapped={false}
           transparent
@@ -1380,8 +1448,8 @@ function ReactorDome({ state }: { state: GameState }) {
           key={`world-ring-${index}`}
           points={points}
           radius={index % 2 === 0 ? 0.035 : 0.026}
-          color="#283940"
-          opacity={0.68}
+          color="#536d75"
+          opacity={0.72}
         />
       ))}
       {ribPaths.map((points, index) => (
@@ -1389,8 +1457,8 @@ function ReactorDome({ state }: { state: GameState }) {
           key={`world-rib-${index}`}
           points={points}
           radius={0.038}
-          color="#101a1f"
-          opacity={0.86}
+          color="#23343b"
+          opacity={0.78}
         />
       ))}
       <DomeTube
@@ -1438,6 +1506,105 @@ function ReactorDome({ state }: { state: GameState }) {
           metrics={metrics}
         />
       ))}
+    </group>
+  );
+}
+
+const createLabRoofLinePositions = (extent: number): number[] => {
+  const half = extent / 2;
+  const positions: number[] = [];
+
+  for (
+    let position = -half;
+    position <= half + 0.01;
+    position += LAB_ROOF_PANEL_SPACING
+  ) {
+    positions.push(Number(position.toFixed(3)));
+  }
+
+  return positions;
+};
+
+const createLabRoofLightPositions = (
+  width: number,
+  depth: number
+): Array<{ x: number; z: number; rotation: number }> => {
+  const columns = width > 18 ? [-width * 0.26, 0, width * 0.26] : [-width * 0.22, width * 0.22];
+  const rows = depth > 18 ? [-depth * 0.24, 0, depth * 0.24] : [-depth * 0.2, depth * 0.2];
+
+  return rows.flatMap((z, rowIndex) =>
+    columns.map((x) => ({
+      x,
+      z,
+      rotation: rowIndex % 2 === 0 ? 0 : Math.PI / 2
+    }))
+  );
+};
+
+function LabRoof({ maze }: { maze: GameState["maze"] }) {
+  const width = Math.max(maze.width + LAB_ROOF_PADDING, 18);
+  const depth = Math.max(maze.height + LAB_ROOF_PADDING, 18);
+  const xLines = useMemo(() => createLabRoofLinePositions(width), [width]);
+  const zLines = useMemo(() => createLabRoofLinePositions(depth), [depth]);
+  const stripLights = useMemo(
+    () => createLabRoofLightPositions(width, depth),
+    [depth, width]
+  );
+
+  return (
+    <group>
+      <mesh position={[0, LAB_ROOF_HEIGHT, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[width, depth]} />
+        <meshStandardMaterial
+          color="#e9f5f1"
+          emissive="#c9fff3"
+          emissiveIntensity={0.12}
+          metalness={0.02}
+          roughness={0.62}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {xLines.map((x) => (
+        <mesh key={`lab-roof-x-${x}`} position={[x, LAB_ROOF_HEIGHT - 0.025, 0]}>
+          <boxGeometry args={[0.026, 0.018, depth]} />
+          <meshBasicMaterial color="#b8c9c8" toneMapped={false} />
+        </mesh>
+      ))}
+      {zLines.map((z) => (
+        <mesh key={`lab-roof-z-${z}`} position={[0, LAB_ROOF_HEIGHT - 0.024, z]}>
+          <boxGeometry args={[width, 0.018, 0.026]} />
+          <meshBasicMaterial color="#b8c9c8" toneMapped={false} />
+        </mesh>
+      ))}
+      {stripLights.map((light) => (
+        <group
+          key={`lab-light-${light.x}-${light.z}`}
+          position={[light.x, LAB_ROOF_HEIGHT - 0.06, light.z]}
+          rotation={[0, light.rotation, 0]}
+        >
+          <mesh>
+            <boxGeometry args={[1.8, 0.028, 0.22]} />
+            <meshBasicMaterial color="#f7fffb" toneMapped={false} />
+          </mesh>
+          <mesh position={[0, -0.018, 0]}>
+            <boxGeometry args={[2.25, 0.018, 0.46]} />
+            <meshBasicMaterial
+              color="#aefcff"
+              depthWrite={false}
+              opacity={0.28}
+              toneMapped={false}
+              transparent
+            />
+          </mesh>
+        </group>
+      ))}
+      <pointLight
+        position={[0, LAB_ROOF_HEIGHT - 0.25, 0]}
+        color="#f0fff9"
+        decay={1.2}
+        distance={Math.max(width, depth)}
+        intensity={0.82}
+      />
     </group>
   );
 }
@@ -1724,6 +1891,13 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
 function MazeScene({ state, viewMode }: GameSceneProps) {
   const wallTextures = useWallTextures();
   const wallTopTexture = useWallTopTexture();
+  const useBrightScene = state.level < REACTOR_ROOF_START_LEVEL;
+  const useLabRoof = state.level <= 2;
+  const useLabWallTextures = state.level <= 2;
+  const labTwoWalls = useMemo(
+    () => (useLabWallTextures ? getLabTwoWallKeys(state) : new Set<string>()),
+    [state.maze, state.seed, useLabWallTextures]
+  );
   const initialOverheadPosition = useMemo<[number, number, number]>(
     () => [
       0,
@@ -1773,14 +1947,41 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
           <RobotCameraRig state={state} />
         </>
       )}
-      {viewMode === "robot" ? <fog attach="fog" args={["#071016", 3.2, 15]} /> : null}
-      {viewMode === "robot" ? <ReactorDome state={state} /> : null}
-      <ambientLight intensity={viewMode === "robot" ? 0.38 : 0.55} />
+      {viewMode === "robot" ? (
+        <fog
+          attach="fog"
+          args={useBrightScene ? ["#ffffff", 7, 22] : ["#223443", 4.2, 19]}
+        />
+      ) : null}
+      {viewMode === "robot" ? (
+        useLabRoof ? (
+          <LabRoof maze={state.maze} />
+        ) : state.level >= REACTOR_ROOF_START_LEVEL ? (
+          <ReactorDome state={state} />
+        ) : null
+      ) : null}
+      <ambientLight
+        intensity={viewMode === "robot" ? (useBrightScene ? 0.72 : 0.58) : 0.72}
+      />
+      {viewMode === "robot" && !useBrightScene ? (
+        <hemisphereLight
+          color="#d8f7ff"
+          groundColor="#47576a"
+          intensity={0.34}
+        />
+      ) : null}
+      {viewMode === "robot" && useBrightScene ? (
+        <hemisphereLight
+          color="#f2fff9"
+          groundColor="#889da3"
+          intensity={0.5}
+        />
+      ) : null}
       {viewMode === "robot" ? <RobotHeadlamp state={state} /> : null}
       <directionalLight
         castShadow
         position={[4, 9, 6]}
-        intensity={viewMode === "robot" ? 0.72 : 1.05}
+        intensity={viewMode === "robot" ? (useBrightScene ? 1.15 : 0.98) : 1.18}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
@@ -1797,7 +1998,17 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
             <WallBlock
               key={`${cell.x}-${cell.y}`}
               position={world}
-              texture={wallTextures[getWallTextureIndex(state.seed, cell.x, cell.y)]}
+              texture={
+                useLabWallTextures
+                  ? wallTextures.lab[
+                      labTwoWalls.has(`${cell.x},${cell.y}`) ? 1 : 0
+                    ]
+                  : state.level === 3
+                    ? wallTextures.office
+                  : wallTextures.reactor[
+                      getWallTextureIndex(state.seed, cell.x, cell.y)
+                    ]
+              }
               topTexture={wallTopTexture}
             />
           ) : null;
@@ -1813,18 +2024,55 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
   );
 }
 
+const getRoomLabel = (level: number): { kicker: string; label: string } => {
+  if (level === 1) {
+    return { kicker: "Level 1", label: "Advanced Robotics" };
+  }
+
+  if (level === 2) {
+    return { kicker: "Level 2", label: "More Advanced Robotics" };
+  }
+
+  if (level === 3) {
+    return { kicker: "Level 3", label: "Office Corridor" };
+  }
+
+  return { kicker: `Level ${level}`, label: "Reactor Sector" };
+};
+
 export default function GameScene({ state, viewMode }: GameSceneProps) {
+  const roomLabel = getRoomLabel(state.level);
+  const sceneClasses = [
+    "scene-shell",
+    viewMode === "robot" ? "robot-view" : "",
+    state.executionStatus === "success" ? "mission-success" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`scene-shell ${viewMode === "robot" ? "robot-view" : ""}`}>
+    <div className={sceneClasses}>
       <Canvas shadows dpr={[1, 1.75]} gl={{ antialias: true }}>
-        <color attach="background" args={["#101720"]} />
+        <SceneBackground useOfficeTexture={state.level < REACTOR_ROOF_START_LEVEL} />
         <MazeScene state={state} viewMode={viewMode} />
       </Canvas>
+      {state.executionStatus === "success" ? (
+        <div className="extraction-victory-signal" role="status" aria-live="polite">
+          <span>Extraction lock</span>
+          <strong>Mission complete</strong>
+        </div>
+      ) : null}
       {viewMode === "robot" ? (
         <div className="robot-feed-overlay" aria-label="Robot camera feed">
           <span className="live-dot" />
           <strong>Robot cam</strong>
           <span>{state.robot.name}</span>
+        </div>
+      ) : null}
+      {viewMode === "robot" ? (
+        <div className="robot-room-label" aria-label="Current room">
+          <span>{roomLabel.kicker}</span>
+          <strong>{roomLabel.label}</strong>
         </div>
       ) : null}
       <div className="scene-caption">

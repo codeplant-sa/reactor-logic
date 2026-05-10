@@ -94,13 +94,6 @@ export default function MiniMap({ state, compact = false }: MiniMapProps) {
             <small>finish</small>
           </span>
         </span>
-        <span className="legend path-dot">
-          <span className="legend-marker" />
-          <span className="legend-copy">
-            <strong>Trail</strong>
-            <small>visited</small>
-          </span>
-        </span>
       </div>
     </section>
   );

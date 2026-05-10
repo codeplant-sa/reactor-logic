@@ -660,6 +660,23 @@ textarea {
   display: block;
 }
 
+.scene-shell.mission-success {
+  border-color: rgba(49, 196, 141, 0.78);
+  box-shadow:
+    inset 0 0 0 1px rgba(217, 255, 242, 0.08),
+    0 0 28px rgba(49, 196, 141, 0.16);
+}
+
+.scene-shell.robot-view canvas {
+  filter: contrast(1.08) saturate(0.98) brightness(1.08);
+  transform: scale(1.002);
+  transform-origin: center;
+}
+
+.scene-shell.robot-view.mission-success canvas {
+  filter: contrast(1.12) saturate(1.08) brightness(1.04);
+}
+
 .scene-shell.robot-view::before,
 .scene-shell.robot-view::after {
   content: "";
@@ -672,8 +689,15 @@ textarea {
 .scene-shell.robot-view::before {
   background:
     linear-gradient(
-      rgba(79, 209, 197, 0.04),
-      rgba(79, 209, 197, 0.01)
+      90deg,
+      rgba(248, 113, 113, 0.025),
+      transparent 16%,
+      transparent 84%,
+      rgba(96, 165, 250, 0.035)
+    ),
+    linear-gradient(
+      rgba(79, 209, 197, 0.035),
+      rgba(79, 209, 197, 0.006)
     ),
     repeating-linear-gradient(
       0deg,
@@ -683,14 +707,63 @@ textarea {
       transparent 8px
     );
   mix-blend-mode: screen;
-  opacity: 0.42;
+  opacity: 0.38;
+  animation:
+    crt-roll 8s linear infinite,
+    crt-flicker 2.6s steps(2, end) infinite;
 }
 
 .scene-shell.robot-view::after {
+  background:
+    radial-gradient(
+      ellipse at center,
+      transparent 52%,
+      rgba(4, 9, 14, 0.12) 76%,
+      rgba(4, 9, 14, 0.44) 100%
+    );
   border: 1px solid rgba(79, 209, 197, 0.38);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
-    inset 0 0 44px rgba(4, 9, 14, 0.52);
+    inset 0 0 22px rgba(79, 209, 197, 0.1),
+    inset 0 0 52px rgba(4, 9, 14, 0.42);
+}
+
+.extraction-victory-signal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 7;
+  display: grid;
+  gap: 4px;
+  min-width: min(280px, calc(100% - 36px));
+  border: 1px solid rgba(49, 196, 141, 0.72);
+  border-radius: 8px;
+  background: rgba(8, 18, 20, 0.76);
+  color: var(--text);
+  padding: 12px 14px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px rgba(217, 255, 242, 0.08),
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    0 0 34px rgba(49, 196, 141, 0.32);
+  transform: translate(-50%, -50%);
+  animation:
+    victory-signal-in 420ms ease-out both,
+    victory-signal-pulse 1.15s ease-in-out 420ms infinite;
+}
+
+.extraction-victory-signal span {
+  color: var(--green);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.extraction-victory-signal strong {
+  font-size: clamp(1rem, 2.5vw, 1.45rem);
+  line-height: 1.05;
 }
 
 .robot-feed-overlay {
@@ -718,6 +791,44 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.robot-room-label {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 7;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: min(260px, calc(100% - 28px));
+  border: 1px solid rgba(79, 209, 197, 0.72);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(8, 18, 20, 0.5), rgba(8, 18, 20, 0.9)),
+    rgba(8, 18, 20, 0.86);
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: right;
+  text-transform: uppercase;
+  pointer-events: none;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.34),
+    0 0 22px rgba(79, 209, 197, 0.22);
+}
+
+.robot-room-label span {
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.robot-room-label strong {
+  font-size: clamp(1.05rem, 2.8vw, 1.72rem);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 14px rgba(79, 209, 197, 0.36);
 }
 
 .live-dot {
@@ -966,9 +1077,10 @@ textarea {
 .ai-copilot {
   flex: 0 0 auto;
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 8px;
   max-height: min(38vh, 340px);
-  overflow: auto;
+  overflow: hidden;
   border-color: rgba(96, 165, 250, 0.42);
   background: rgba(23, 34, 45, 0.9);
 }
@@ -976,13 +1088,14 @@ textarea {
 .copilot-drawer {
   position: fixed;
   left: 14px;
-  bottom: 64px;
-  z-index: 16;
-  width: min(390px, calc(100vw - 28px));
-  max-height: min(62vh, 540px);
+  top: 220px;
+  z-index: 18;
+  width: min(390px, calc(100vw - 24px));
+  height: var(--copilot-panel-height, min(62vh, 540px));
+  max-height: calc(100vh - 24px);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(calc(100% + 82px));
+  transform: translateY(8px) scale(0.98);
   transition:
     opacity 180ms ease,
     transform 180ms ease;
@@ -995,15 +1108,38 @@ textarea {
 }
 
 .copilot-drawer .ai-copilot {
-  max-height: inherit;
+  height: 100%;
+  max-height: 100%;
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(10px);
 }
 
-.copilot-heading > span {
+.copilot-drag-handle {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  color: var(--text);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.copilot-drag-handle:active {
+  cursor: grabbing;
+}
+
+.copilot-drag-handle.pinned {
+  cursor: default;
+}
+
+.copilot-drag-handle > span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 0.92rem;
 }
 
 .copilot-heading svg {
@@ -1024,6 +1160,11 @@ textarea {
   min-height: 26px;
   padding: 0;
   border-radius: 6px;
+}
+
+.copilot-heading-actions button.active {
+  border-color: rgba(96, 165, 250, 0.78);
+  background: rgba(96, 165, 250, 0.18);
 }
 
 .copilot-controls {
@@ -1049,6 +1190,89 @@ textarea {
   min-width: 76px;
 }
 
+.ai-copilot textarea {
+  min-height: 58px;
+  resize: none;
+}
+
+.copilot-thread {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid rgba(81, 97, 113, 0.46);
+  border-radius: 8px;
+  background: rgba(9, 16, 23, 0.28);
+  padding: 8px;
+}
+
+.copilot-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 20px 8px;
+}
+
+.copilot-turn {
+  display: grid;
+  gap: 7px;
+}
+
+.copilot-user-message,
+.copilot-assistant-message {
+  display: grid;
+  gap: 5px;
+  max-width: 94%;
+  border: 1px solid rgba(81, 97, 113, 0.52);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.copilot-user-message {
+  justify-self: end;
+  border-color: rgba(96, 165, 250, 0.36);
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.copilot-assistant-message {
+  justify-self: start;
+  background: rgba(17, 26, 36, 0.72);
+}
+
+.copilot-assistant-message.risk-high {
+  border-color: rgba(248, 113, 113, 0.48);
+}
+
+.copilot-assistant-message.risk-medium {
+  border-color: rgba(248, 212, 72, 0.48);
+}
+
+.copilot-assistant-message.risk-low {
+  border-color: rgba(49, 196, 141, 0.48);
+}
+
+.copilot-user-message span {
+  color: #bfdbfe;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.copilot-user-message p,
+.copilot-loading {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.copilot-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
 .copilot-error {
   margin: 0;
   border: 1px solid rgba(248, 113, 113, 0.48);
@@ -1062,8 +1286,7 @@ textarea {
 .copilot-answer {
   display: grid;
   gap: 8px;
-  border-top: 1px solid rgba(81, 97, 113, 0.62);
-  padding-top: 8px;
+  min-width: 0;
 }
 
 .copilot-answer.risk-high {
@@ -1522,11 +1745,6 @@ textarea {
   background: var(--green);
 }
 
-.path-dot .legend-marker {
-  border-radius: 3px;
-  background: #2a4052;
-}
-
 .sensor-panel dl,
 .score-grid,
 .robot-stats {
@@ -1596,6 +1814,74 @@ textarea {
   background: rgba(18, 27, 36, 0.96);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
   padding: 16px;
+}
+
+.level-transition-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background:
+    radial-gradient(circle at center, rgba(79, 209, 197, 0.16), transparent 38%),
+    rgba(4, 8, 12, 0.82);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 460ms ease;
+}
+
+.level-transition-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.level-transition-panel {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 9px;
+  justify-items: center;
+  border: 1px solid rgba(79, 209, 197, 0.58);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.9);
+  color: var(--text);
+  padding: 16px;
+  text-align: center;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.level-transition-panel span {
+  color: var(--cyan);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.level-transition-panel strong {
+  font-size: 1.1rem;
+}
+
+.level-loading-bars {
+  display: grid;
+  grid-template-columns: repeat(3, 42px);
+  gap: 6px;
+}
+
+.level-loading-bars i {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(79, 209, 197, 0.24);
+  animation: level-loading-bar 780ms ease-in-out infinite;
+}
+
+.level-loading-bars i:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.level-loading-bars i:nth-child(3) {
+  animation-delay: 240ms;
 }
 
 .summary-header {
@@ -2158,12 +2444,88 @@ textarea {
   }
 }
 
+@keyframes crt-roll {
+  from {
+    background-position:
+      0 0,
+      0 0,
+      0 0;
+  }
+
+  to {
+    background-position:
+      0 0,
+      0 0,
+      0 16px;
+  }
+}
+
+@keyframes crt-flicker {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  48% {
+    opacity: 0.54;
+  }
+
+  52% {
+    opacity: 0.38;
+  }
+}
+
+@keyframes victory-signal-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -44%) scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes victory-signal-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(217, 255, 242, 0.08),
+      0 18px 42px rgba(0, 0, 0, 0.38),
+      0 0 28px rgba(49, 196, 141, 0.24);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(217, 255, 242, 0.16),
+      0 18px 42px rgba(0, 0, 0, 0.38),
+      0 0 48px rgba(49, 196, 141, 0.48);
+  }
+}
+
+@keyframes level-loading-bar {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleX(0.72);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .preload-scanline,
   .preload-path,
   .preload-hotspot,
   .preload-robot,
   .preload-foam,
+  .scene-shell.robot-view::before,
+  .extraction-victory-signal,
+  .level-loading-bars i,
   .spin {
     animation-duration: 1ms;
     animation-iteration-count: 1;
@@ -2324,10 +2686,8 @@ textarea {
   }
 
   .copilot-drawer {
-    left: 8px;
-    bottom: 58px;
-    width: calc(100vw - 16px);
-    max-height: min(68vh, 560px);
+    bottom: auto;
+    width: min(390px, calc(100vw - 24px));
   }
 
   .block-main {
