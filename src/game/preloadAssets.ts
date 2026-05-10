@@ -1,6 +1,5 @@
 import codeplantLogoUrl from "../../public/codeplant.png";
 import floorTextureUrl from "../../public/images/floor1.jpg";
-import reactorBackdropUrl from "../../public/images/reactor-backdrop.jpg";
 import wallTextureOneUrl from "../../public/images/wall1.jpg";
 import wallTextureTwoUrl from "../../public/images/wall2.jpg";
 import wallTextureFiveUrl from "../../public/images/wall5.jpg";
@@ -36,14 +35,13 @@ const steps: PreloadStep[] = [
     load: () => preloadImage(codeplantLogoUrl)
   },
   {
-    label: "Loading reactor wall, wall-cap, and backdrop textures",
+    label: "Loading reactor wall and wall-cap textures",
     load: async () => {
       await Promise.all([
         preloadImage(floorTextureUrl),
         preloadImage(wallTextureOneUrl),
         preloadImage(wallTextureTwoUrl),
-        preloadImage(wallTextureFiveUrl),
-        preloadImage(reactorBackdropUrl)
+        preloadImage(wallTextureFiveUrl)
       ]);
     }
   },
