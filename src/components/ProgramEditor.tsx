@@ -40,7 +40,7 @@ interface ProgramEditorProps {
   program: ProgramBlock[];
   activeBlockId?: string;
   onProgramChange: (program: ProgramBlock[]) => void;
-  onLoadPracticeRoute: () => void;
+  onLoadTrainingProgram: () => void;
   onClearProgram: () => void;
   paletteAddRequest?: PaletteAddRequest | null;
   onPaletteAddHandled?: (id: number) => void;
@@ -432,7 +432,7 @@ export default function ProgramEditor({
   program,
   activeBlockId,
   onProgramChange,
-  onLoadPracticeRoute,
+  onLoadTrainingProgram,
   onClearProgram,
   paletteAddRequest,
   onPaletteAddHandled
@@ -628,9 +628,9 @@ export default function ProgramEditor({
       <div className="panel-heading">
         <span>Command List</span>
         <div className="editor-actions">
-          <button type="button" onClick={onLoadPracticeRoute}>
+          <button type="button" onClick={onLoadTrainingProgram}>
             <Wand2 size={14} />
-            Practice route
+            Training solution
           </button>
           <button type="button" onClick={onClearProgram}>
             Clear

@@ -1,5 +1,5 @@
 import { createBlock } from "./blocks";
-import { Direction, Maze, Position, ProgramBlock } from "./types";
+import { ConditionType, Direction, Maze, Position, ProgramBlock } from "./types";
 
 type DistanceMap = Map<string, number>;
 
@@ -17,6 +17,18 @@ type MazeProfile = {
   clearingMaxSize: number;
   randomOpenChance: number;
   aisleCount: number;
+};
+
+type PredefinedLevelDefinition = {
+  level: number;
+  seed: string;
+  rows: string[];
+  hotspotRadiation: number[];
+  parActions: number;
+  baseRadiation: number;
+  initialFoam: number;
+  meltdownTicks: number;
+  trainingGuide: NonNullable<Maze["trainingGuide"]>;
 };
 
 const directionOrder: Direction[] = ["north", "east", "south", "west"];
@@ -479,8 +491,165 @@ const selectSpreadHotspotCells = (
   return selected.slice(0, hotspotCount);
 };
 
+const PREDEFINED_LEVELS: Record<number, PredefinedLevelDefinition> = {
+  1: {
+    level: 1,
+    seed: "training-sequence-01",
+    rows: [
+      "#########",
+      "#S..H..E#",
+      "#########",
+      "#########",
+      "#########",
+      "#########",
+      "#########",
+      "#########",
+      "#########"
+    ],
+    hotspotRadiation: [18],
+    parActions: 7,
+    baseRadiation: 28,
+    initialFoam: 2,
+    meltdownTicks: 22,
+    trainingGuide: {
+      id: "sequence-walkthrough",
+      title: "Level 1 Training",
+      focus: "Step-by-step sequence",
+      summary:
+        "A straight corridor introduces one command at a time: move to the hotspot, deploy foam, then continue to extraction.",
+      referenceLabel: "Load step-by-step solution",
+      concepts: ["sequence", "step mode", "mission completion"]
+    }
+  },
+  2: {
+    level: 2,
+    seed: "training-logic-02",
+    rows: [
+      "#########",
+      "#S.H#####",
+      "###.#####",
+      "###H.E###",
+      "#########",
+      "#########",
+      "#########",
+      "#########",
+      "#########"
+    ],
+    hotspotRadiation: [20, 22],
+    parActions: 10,
+    baseRadiation: 34,
+    initialFoam: 3,
+    meltdownTicks: 30,
+    trainingGuide: {
+      id: "repeat-if-route",
+      title: "Level 2 Training",
+      focus: "Repeat loops and if/then checks",
+      summary:
+        "The reference compresses movement with repeat blocks and protects each foam deployment behind an on-hotspot condition.",
+      referenceLabel: "Load repeat + if solution",
+      concepts: ["repeat loop", "if then", "sensor condition"]
+    }
+  },
+  3: {
+    level: 3,
+    seed: "training-procedure-03",
+    rows: [
+      "#########",
+      "#S.H....#",
+      "###.#####",
+      "###H..H##",
+      "######.##",
+      "######E##",
+      "#########",
+      "#########",
+      "#########"
+    ],
+    hotspotRadiation: [22, 24, 26],
+    parActions: 15,
+    baseRadiation: 40,
+    initialFoam: 4,
+    meltdownTicks: 46,
+    trainingGuide: {
+      id: "procedure-while-route",
+      title: "Level 3 Training",
+      focus: "Procedure calls, if/then, and while",
+      summary:
+        "The reference defines a reusable seal routine, calls it at each target, and wraps the cleanup path in a while hotspots-left loop.",
+      referenceLabel: "Load procedure + while solution",
+      concepts: ["function definition", "function call", "if then", "while loop"]
+    }
+  }
+};
+
+const createPredefinedMaze = (definition: PredefinedLevelDefinition): Maze => {
+  const height = definition.rows.length;
+  const width = definition.rows[0]?.length ?? 0;
+  let start: Position | undefined;
+  let extraction: Position | undefined;
+  const hotspots: Maze["hotspots"] = [];
+
+  const cells = definition.rows.map((row, y) => {
+    if (row.length !== width) {
+      throw new Error(`Predefined level ${definition.level} has uneven row widths.`);
+    }
+
+    return [...row].map((marker, x) => {
+      if (marker === "S") {
+        start = { x, y };
+      }
+      if (marker === "E") {
+        extraction = { x, y };
+      }
+      if (marker === "H") {
+        const index = hotspots.length;
+        hotspots.push({
+          id: `hotspot-${index + 1}`,
+          position: { x, y },
+          radiationValue:
+            definition.hotspotRadiation[index] ??
+            definition.hotspotRadiation[definition.hotspotRadiation.length - 1] ??
+            20,
+          sealed: false
+        });
+      }
+
+      return {
+        x,
+        y,
+        wall: marker === "#"
+      };
+    });
+  });
+
+  if (!start || !extraction || hotspots.length === 0) {
+    throw new Error(`Predefined level ${definition.level} is missing mission markers.`);
+  }
+
+  return {
+    width,
+    height,
+    cells,
+    start,
+    extraction,
+    hotspots,
+    parActions: definition.parActions,
+    seed: definition.seed,
+    baseRadiation: definition.baseRadiation,
+    initialFoam: definition.initialFoam,
+    meltdownTicks: definition.meltdownTicks,
+    difficulty: definition.level,
+    predefined: true,
+    trainingGuide: definition.trainingGuide
+  };
+};
+
 export const generateMaze = (level: number, requestedSeed?: string): Maze => {
   const difficulty = Math.max(1, level);
+  const predefined = PREDEFINED_LEVELS[difficulty];
+  if (predefined) {
+    return createPredefinedMaze(predefined);
+  }
+
   const seed = normalizeSeed(requestedSeed, difficulty);
   const random = mulberry32(hashSeed(seed));
   const profile = getMazeProfile(difficulty);
@@ -580,6 +749,91 @@ const addTurnsToward = (
   return facing;
 };
 
+const configuredBlock = (
+  type: string,
+  params: ProgramBlock["params"] = {},
+  children?: ProgramBlock["children"]
+): ProgramBlock => {
+  const created = createBlock(type);
+  return {
+    ...created,
+    params: {
+      ...created.params,
+      ...params
+    },
+    children: children ?? created.children
+  };
+};
+
+const move = (): ProgramBlock => createBlock("moveForward");
+const turnRightBlock = (): ProgramBlock => createBlock("turnRight");
+const turnLeftBlock = (): ProgramBlock => createBlock("turnLeft");
+
+const repeatBlock = (count: number, body: ProgramBlock[]): ProgramBlock =>
+  configuredBlock("repeat", { count }, { body });
+
+const ifBlock = (condition: ConditionType, body: ProgramBlock[]): ProgramBlock =>
+  configuredBlock("if", { condition }, { body });
+
+const whileBlock = (condition: ConditionType, body: ProgramBlock[]): ProgramBlock =>
+  configuredBlock("while", { condition }, { body });
+
+const defineProcedureBlock = (
+  name: string,
+  procedureBody: ProgramBlock[]
+): ProgramBlock => configuredBlock("defineProcedure", { name }, { procedureBody });
+
+const callProcedureBlock = (name: string): ProgramBlock =>
+  configuredBlock("callProcedure", { name });
+
+const buildLevelOneTrainingProgram = (): ProgramBlock[] => [
+  move(),
+  move(),
+  move(),
+  createBlock("deployFoam"),
+  move(),
+  move(),
+  move()
+];
+
+const buildLevelTwoTrainingProgram = (): ProgramBlock[] => [
+  repeatBlock(2, [move()]),
+  ifBlock("on_hotspot", [createBlock("deployFoam")]),
+  turnRightBlock(),
+  repeatBlock(2, [move()]),
+  ifBlock("on_hotspot", [createBlock("deployFoam")]),
+  turnLeftBlock(),
+  repeatBlock(2, [move()])
+];
+
+const buildLevelThreeTrainingProgram = (): ProgramBlock[] => {
+  const sealIfPresent = "seal_if_present";
+
+  return [
+    defineProcedureBlock(sealIfPresent, [
+      ifBlock("on_hotspot", [createBlock("deployFoam")])
+    ]),
+    whileBlock("hotspots_left_gt_0", [
+      repeatBlock(2, [move()]),
+      callProcedureBlock(sealIfPresent),
+      turnRightBlock(),
+      repeatBlock(2, [move()]),
+      callProcedureBlock(sealIfPresent),
+      turnLeftBlock(),
+      repeatBlock(3, [move()]),
+      callProcedureBlock(sealIfPresent)
+    ]),
+    turnRightBlock(),
+    repeatBlock(2, [move()])
+  ];
+};
+
+const trainingProgramBuilders: Record<number, () => ProgramBlock[]> = {
+  1: buildLevelOneTrainingProgram,
+  2: buildLevelTwoTrainingProgram,
+  3: buildLevelThreeTrainingProgram
+};
+
 export const buildPracticeProgram = (
   maze: Maze,
   initialFacing: Direction = "east"
@@ -615,4 +869,12 @@ export const buildPracticeProgram = (
   }
 
   return commands;
+};
+
+export const buildTrainingProgram = (
+  maze: Maze,
+  initialFacing: Direction = "east"
+): ProgramBlock[] => {
+  const builder = trainingProgramBuilders[maze.difficulty];
+  return builder ? builder() : buildPracticeProgram(maze, initialFacing);
 };

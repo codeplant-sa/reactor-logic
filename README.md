@@ -4,7 +4,7 @@ Expandable React, TypeScript, and Three.js browser game prototype for teaching b
 
 ## Gameplay
 
-Program a response robot through a compromised fictional coastal research reactor maze. The player chooses a robot, assembles command blocks, previews Python-like pseudocode, then runs or steps through the program to seal stabilizing-foam hotspots and reach extraction before the turn-based meltdown timer expires.
+Program a response robot through a compromised fictional coastal research reactor maze. The player chooses a robot, assembles command blocks, previews Python-like pseudocode, then runs or steps through the program to seal stabilizing-foam hotspots and reach extraction before the turn-based meltdown timer expires. The first three levels are fixed training missions with reference solutions that introduce sequence, repeat/if logic, then procedure and while patterns.
 
 ![Robot selection and mission briefing](docs/screenshots/intro.png)
 
@@ -34,7 +34,7 @@ npm run build
 
 ## Cloudflare Pages
 
-This project is configured to build as a static Cloudflare Pages app.
+This project is configured to build as a Cloudflare Pages app with a Pages Function for the AI Copilot. The copilot posts a compact maze/program snapshot to `/api/copilot`, which calls Workers AI with `@cf/moonshotai/kimi-k2.6` through the `AI` binding.
 
 Cloudflare Pages Git settings:
 
@@ -48,6 +48,9 @@ Local Pages preview:
 ```bash
 npm run pages:preview
 ```
+
+The plain webpack dev server does not serve Pages Functions, so the AI Copilot endpoint is available through Cloudflare Pages preview/deploy.
+Workers AI calls use your Cloudflare account in local Pages preview; the `pages:preview` script exposes the `AI` binding with `--ai AI`.
 
 Direct upload deploy with Wrangler:
 
@@ -64,7 +67,7 @@ Licensed under the GNU Affero General Public License v3.0 only. This keeps colla
 
 ## Project Shape
 
-- `src/game/mazeGenerator.ts`: seeded maze generation, BFS reachability, par-action estimate, practice-route helper.
+- `src/game/mazeGenerator.ts`: fixed training levels, seeded maze generation, BFS reachability, par-action estimate, and training-route helpers.
 - `src/game/interpreter.ts`: block execution, conditions, nested control flow, safety cap, mission success/failure.
 - `src/game/blocks.ts`: registry-based block definitions and Python-like pseudocode rendering.
 - `src/game/robots.ts`: configurable robot stats and tradeoffs.
@@ -90,6 +93,6 @@ Add a `RobotConfig` entry in `src/game/robots.ts`. The game state applies moveme
 
 ## Tune Levels
 
-Adjust `generateMaze` in `src/game/mazeGenerator.ts` for maze size, hotspot count, radiation values, foam budget, and meltdown timer scaling. The generator uses seeded randomness plus BFS validation so generated hotspots and extraction remain reachable.
+Adjust the predefined training definitions or `generateMaze` in `src/game/mazeGenerator.ts` for maze size, hotspot count, radiation values, foam budget, and meltdown timer scaling. Levels 1-3 are fixed training maps; later levels use seeded randomness plus BFS validation so generated hotspots and extraction remain reachable.
 
 The scenario is intentionally fictional and arcade-puzzle focused. Stabilizing foam and the Kuroshio facility are gameplay inventions.

@@ -53,6 +53,15 @@ export interface Hotspot {
   sealed: boolean;
 }
 
+export interface TrainingGuide {
+  id: string;
+  title: string;
+  focus: string;
+  summary: string;
+  referenceLabel: string;
+  concepts: string[];
+}
+
 export interface Maze {
   width: number;
   height: number;
@@ -66,6 +75,8 @@ export interface Maze {
   initialFoam: number;
   meltdownTicks: number;
   difficulty: number;
+  predefined?: boolean;
+  trainingGuide?: TrainingGuide;
 }
 
 export interface RobotConfig {

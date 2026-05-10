@@ -8,7 +8,7 @@
     "start": "webpack serve --mode development --host 0.0.0.0",
     "build": "webpack --mode production",
     "typecheck": "tsc --noEmit",
-    "pages:preview": "npm run build && wrangler pages dev dist",
+    "pages:preview": "npm run build && wrangler pages dev dist --ai AI",
     "pages:deploy": "npm run build && wrangler pages deploy dist --project-name reactor-logic-foam-run",
     "cf:whoami": "wrangler whoami"
   },

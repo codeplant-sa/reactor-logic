@@ -3,7 +3,7 @@ import {
   Camera,
   Github,
   Info,
-  Map,
+  Map as MapIcon,
   Pause,
   Play,
   RefreshCw,
@@ -14,6 +14,7 @@ import {
   VolumeX,
   X
 } from "lucide-react";
+import AiCopilot from "./components/AiCopilot";
 import BlockPalette from "./components/BlockPalette";
 import CodePreview from "./components/CodePreview";
 import GameScene, { CameraViewMode } from "./components/GameScene";
@@ -31,11 +32,22 @@ import {
   stopIntroMusic,
   stopBackgroundMusic
 } from "./game/audio";
-import { countBlocks } from "./game/blocks";
+import {
+  blockDefinitions,
+  CONDITION_OPTIONS,
+  countBlocks,
+  programToPseudoCode
+} from "./game/blocks";
+import type {
+  CopilotMode,
+  CopilotProgramBlock,
+  CopilotResponse,
+  CopilotSnapshot
+} from "./game/copilot";
 import { executeNextInstruction, createExecutionRuntime } from "./game/interpreter";
 import { preloadGameAssets, PreloadProgress } from "./game/preloadAssets";
 import {
-  buildPracticeProgram,
+  buildTrainingProgram,
   generateMaze,
   getNextPosition,
   isWall,
@@ -71,6 +83,13 @@ const createGameState = (
     maze.baseRadiation +
     hotspots.reduce((total, hotspot) => total + hotspot.radiationValue, 0);
 
+  const missionLog = [
+    `Level ${level} ready. Seal ${hotspots.length} hotspots, then reach extraction.`
+  ];
+  if (maze.trainingGuide) {
+    missionLog.unshift(`Training mode: ${maze.trainingGuide.focus}.`);
+  }
+
   return {
     level,
     seed: maze.seed,
@@ -90,9 +109,7 @@ const createGameState = (
     wallHits: 0,
     wallHitLimit: Math.max(1, robot.wallHitLimit - Math.floor((level - 1) / 5)),
     pathTrace: [maze.start],
-    missionLog: [
-      `Level ${level} ready. Seal ${hotspots.length} hotspots, then reach extraction.`
-    ],
+    missionLog,
     executionStatus: "idle"
   };
 };
@@ -188,6 +205,221 @@ function SensorPanel({ state }: { state: GameState }) {
         </div>
       </dl>
     </section>
+  );
+}
+
+function TrainingPanel({ state }: { state: GameState }) {
+  const guide = state.maze.trainingGuide;
+  if (!guide) {
+    return null;
+  }
+
+  return (
+    <section className="training-panel">
+      <div className="panel-heading">
+        <span>{guide.title}</span>
+        <small>{guide.focus}</small>
+      </div>
+      <p>{guide.summary}</p>
+      <ul>
+        {guide.concepts.map((concept) => (
+          <li key={concept}>{concept}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const COPILOT_MAZE_LEGEND: Record<string, string> = {
+  "#": "wall",
+  ".": "open floor",
+  S: "start",
+  E: "extraction",
+  H: "unsealed hotspot",
+  X: "sealed hotspot",
+  R: "robot"
+};
+
+const compactProgramBlock = (block: ProgramBlock): CopilotProgramBlock => ({
+  type: block.type,
+  params: block.params,
+  children: block.children
+    ? Object.fromEntries(
+        Object.entries(block.children).map(([slot, blocks]) => [
+          slot,
+          (blocks ?? []).map(compactProgramBlock)
+        ])
+      )
+    : undefined
+});
+
+const buildCopilotMazeRows = (state: GameState): string[] => {
+  const hotspotsByPosition = new Map(
+    state.hotspots.map((hotspot) => [
+      `${hotspot.position.x},${hotspot.position.y}`,
+      hotspot
+    ])
+  );
+
+  return state.maze.cells.map((row) =>
+    row
+      .map((cell) => {
+        const position = { x: cell.x, y: cell.y };
+        const hotspot = hotspotsByPosition.get(`${cell.x},${cell.y}`);
+
+        if (samePosition(state.position, position)) return "R";
+        if (samePosition(state.maze.start, position)) return "S";
+        if (samePosition(state.maze.extraction, position)) return "E";
+        if (hotspot) return hotspot.sealed ? "X" : "H";
+        return cell.wall ? "#" : ".";
+      })
+      .join("")
+  );
+};
+
+const buildCopilotSnapshot = (state: GameState): CopilotSnapshot => ({
+  level: state.level,
+  seed: state.seed,
+  trainingFocus: state.maze.trainingGuide?.focus,
+  robot: {
+    name: state.robot.name,
+    callSign: state.robot.callSign,
+    position: state.position,
+    facing: state.facing,
+    foamCharges: state.foamCharges,
+    meltdownTicks: state.meltdownTicks,
+    wallHits: state.wallHits,
+    wallHitLimit: state.wallHitLimit
+  },
+  mission: {
+    start: state.maze.start,
+    extraction: state.maze.extraction,
+    hotspots: state.hotspots.map((hotspot) => ({
+      id: hotspot.id,
+      position: hotspot.position,
+      sealed: hotspot.sealed,
+      radiationValue: hotspot.radiationValue
+    })),
+    plantRadiation: state.plantRadiation,
+    radiationReduced: state.radiationReduced,
+    actionsUsed: state.actionsUsed,
+    blocksUsed: state.blocksUsed
+  },
+  maze: {
+    width: state.maze.width,
+    height: state.maze.height,
+    legend: COPILOT_MAZE_LEGEND,
+    rows: buildCopilotMazeRows(state)
+  },
+  program: {
+    pseudoCode: programToPseudoCode(state.program),
+    blocks: state.program.map(compactProgramBlock)
+  },
+  availableBlocks: Object.values(blockDefinitions).map((definition) => ({
+    type: definition.type,
+    label: definition.label,
+    description: definition.description,
+    category: definition.category
+  })),
+  availableConditions: CONDITION_OPTIONS.map((condition) => ({
+    type: condition.type,
+    label: condition.label,
+    help: condition.help
+  }))
+});
+
+const readCopilotError = (payload: unknown): string | undefined => {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
+  }
+  return undefined;
+};
+
+function MissionSummaryModal({
+  state,
+  onContinue,
+  onQuit
+}: {
+  state: GameState;
+  onContinue: () => void;
+  onQuit: () => void;
+}) {
+  if (state.executionStatus !== "success") {
+    return null;
+  }
+
+  const score = state.score ?? calculateScore(state);
+  const tilesMoved = Math.max(0, state.pathTrace.length - 1);
+  const sealed = state.hotspots.filter((hotspot) => hotspot.sealed).length;
+
+  return (
+    <div className="mission-summary-overlay" role="presentation">
+      <section
+        className="mission-summary-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mission-summary-title"
+      >
+        <div className="summary-header">
+          <div>
+            <span>Level {state.level} complete</span>
+            <h2 id="mission-summary-title">Mission Summary</h2>
+          </div>
+          <div className="summary-score">
+            <strong>{score.totalScore}</strong>
+            <span>{score.stars} / 5 stars</span>
+          </div>
+        </div>
+        <dl className="summary-grid">
+          <div>
+            <dt>Tiles moved</dt>
+            <dd>{tilesMoved}</dd>
+          </div>
+          <div>
+            <dt>Actions used</dt>
+            <dd>{score.actionsUsed} / {score.parActions}</dd>
+          </div>
+          <div>
+            <dt>Hotspots sealed</dt>
+            <dd>{sealed} / {state.hotspots.length}</dd>
+          </div>
+          <div>
+            <dt>Radiation reduced</dt>
+            <dd>{score.radiationReduced}</dd>
+          </div>
+          <div>
+            <dt>Foam remaining</dt>
+            <dd>{score.foamRemaining}</dd>
+          </div>
+          <div>
+            <dt>Blocks used</dt>
+            <dd>{score.blocksUsed}</dd>
+          </div>
+          <div>
+            <dt>Meltdown ticks left</dt>
+            <dd>{score.meltdownTicksRemaining}</dd>
+          </div>
+          <div>
+            <dt>Wall hits</dt>
+            <dd>{score.wallHits}</dd>
+          </div>
+        </dl>
+        <div className="summary-actions">
+          <button type="button" className="secondary-action" onClick={onQuit}>
+            Quit
+          </button>
+          <button type="button" className="primary-action" onClick={onContinue}>
+            Continue
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -373,6 +605,17 @@ export default function App() {
     setSeedDraft(reset.seed);
   };
 
+  const quitMission = () => {
+    setSelectedRobot(null);
+    setGame(null);
+    setTrayOpen(false);
+    stopBackgroundMusic();
+    if (!musicMuted) {
+      playIntroMusic();
+    }
+    resetRuntime();
+  };
+
   const newLevel = () => {
     if (!selectedRobot) return;
     const nextLevel = level + 1;
@@ -388,9 +631,13 @@ export default function App() {
     beginMission(selectedRobot, level, seedDraft);
   };
 
-  const loadPracticeRoute = () => {
+  const loadTrainingProgram = () => {
     if (!game) return;
-    const program = buildPracticeProgram(game.maze, chooseStartFacing(game.maze));
+    const program = buildTrainingProgram(game.maze, chooseStartFacing(game.maze));
+    const guide = game.maze.trainingGuide;
+    const trainingMessage = guide
+      ? `${guide.referenceLabel.replace(/^Load /, "")} loaded into the command list.`
+      : "Practice route loaded into the command list.";
     resetRuntime();
     setGame((previous) =>
       previous
@@ -402,13 +649,48 @@ export default function App() {
               previous.executionStatus === "running" ? "paused" : previous.executionStatus,
             activeBlockId: undefined,
             missionLog: [
-              "Practice route loaded into the command list.",
+              trainingMessage,
               ...previous.missionLog
             ].slice(0, 12)
           }
         : previous
     );
   };
+
+  const askCopilot = useCallback(
+    async (
+      mode: CopilotMode,
+      question?: string
+    ): Promise<CopilotResponse> => {
+      if (!game) {
+        throw new Error("No active mission.");
+      }
+
+      const response = await fetch("/api/copilot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          question,
+          snapshot: buildCopilotSnapshot(game)
+        })
+      });
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = undefined;
+      }
+
+      if (!response.ok) {
+        throw new Error(readCopilotError(payload) ?? "Copilot request failed.");
+      }
+
+      return payload as CopilotResponse;
+    },
+    [game]
+  );
 
   const canRun = useMemo(
     () =>
@@ -496,6 +778,10 @@ export default function App() {
               <Pause size={15} />
               Pause
             </button>
+            <button type="button" onClick={() => resetRobot()}>
+              <RotateCcw size={15} />
+              Reset robot
+            </button>
             <button
               type="button"
               className={`audio-toggle ${!musicMuted ? "active" : ""}`}
@@ -511,7 +797,7 @@ export default function App() {
               aria-pressed={mapPinned}
               onClick={() => setMapPinned((pinned) => !pinned)}
             >
-              <Map size={15} />
+              <MapIcon size={15} />
               {mapPinned ? "Hide map" : "Pin map"}
             </button>
             <button
@@ -556,7 +842,7 @@ export default function App() {
             <div className="tray-header">
               <div>
                 <strong>Mission Tray</strong>
-                <span>Map, code, logs, and reset tools</span>
+                <span>Map, code, logs, and level tools</span>
               </div>
               <button
                 type="button"
@@ -581,17 +867,14 @@ export default function App() {
               )}
               <SensorPanel state={game} />
               <ScorePanel state={game} />
+              <TrainingPanel state={game} />
               <CodePreview program={game.program} />
               <section className="tray-panel">
                 <div className="panel-heading">
                   <span>Level Tools</span>
-                  <small>Replay and reset</small>
+                  <small>Replay and level options</small>
                 </div>
                 <div className="tray-actions">
-                  <button type="button" onClick={() => resetRobot()}>
-                    <RotateCcw size={15} />
-                    Reset robot
-                  </button>
                   <button type="button" onClick={resetLevel}>
                     <RefreshCw size={15} />
                     Reset level
@@ -614,16 +897,7 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedRobot(null);
-                      setGame(null);
-                      setTrayOpen(false);
-                      stopBackgroundMusic();
-                      if (!musicMuted) {
-                        playIntroMusic();
-                      }
-                      resetRuntime();
-                    }}
+                    onClick={quitMission}
                   >
                     Robot
                   </button>
@@ -645,6 +919,10 @@ export default function App() {
         ) : null}
       </aside>
       <aside className="side-panel">
+        <AiCopilot
+          disabled={game.executionStatus === "running"}
+          onAsk={askCopilot}
+        />
         <div className="editor-grid">
           <BlockPalette
             onAddBlock={(block) =>
@@ -658,7 +936,7 @@ export default function App() {
             program={game.program}
             activeBlockId={game.activeBlockId}
             onProgramChange={handleProgramChange}
-            onLoadPracticeRoute={loadPracticeRoute}
+            onLoadTrainingProgram={loadTrainingProgram}
             onClearProgram={() => handleProgramChange([])}
             paletteAddRequest={paletteAddRequest}
             onPaletteAddHandled={(id) =>
@@ -669,6 +947,11 @@ export default function App() {
           />
         </div>
       </aside>
+      <MissionSummaryModal
+        state={game}
+        onContinue={newLevel}
+        onQuit={quitMission}
+      />
     </main>
   );
 }

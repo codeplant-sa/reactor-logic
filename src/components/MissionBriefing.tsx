@@ -19,8 +19,9 @@ export default function MissionBriefing({ compact = false }: MissionBriefingProp
       </p>
       {!compact ? (
         <p>
-          The lesson is logic: sequence commands, use sensor conditions, compress
-          repeated movement with loops, and debug safely with Step mode.
+          The opening training levels use fixed mazes and reference solutions:
+          sequence first, then conditions and loops, then procedures and while
+          logic. Debug safely with Step mode.
         </p>
       ) : null}
     </section>

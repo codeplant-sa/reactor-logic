@@ -48,47 +48,54 @@ const Stat = ({
 
 export default function HUD({ state, controls }: HUDProps) {
   const sealed = state.hotspots.filter((hotspot) => hotspot.sealed).length;
+  const missionTitle = state.maze.trainingGuide
+    ? `Training L${state.level}: ${state.maze.trainingGuide.focus}`
+    : "Reactor Logic: Foam Run";
 
   return (
-    <header className="top-hud">
-      <div className="mission-title">
-        <span>Reactor Logic: Foam Run</span>
-        <StatusPill state={state} />
+    <>
+      <header className="top-hud">
+        <div className="mission-title">
+          <span>{missionTitle}</span>
+          <StatusPill state={state} />
+        </div>
+        {controls ? <div className="header-controls">{controls}</div> : null}
+      </header>
+      <div className="bottom-hud" aria-label="Mission values">
+        <div className="hud-grid">
+          <Stat
+            icon={<Timer size={16} />}
+            label="Meltdown"
+            value={state.meltdownTicks}
+            warning={state.meltdownTicks <= 8}
+          />
+          <Stat
+            icon={<Radiation size={16} />}
+            label="Radiation"
+            value={Math.round(state.plantRadiation)}
+            warning={state.plantRadiation > state.maze.baseRadiation + 35}
+          />
+          <Stat
+            icon={<Activity size={16} />}
+            label="Reduced"
+            value={Math.round(state.radiationReduced)}
+          />
+          <Stat icon={<Droplet size={16} />} label="Foam" value={state.foamCharges} />
+          <Stat icon={<Move size={16} />} label="Actions" value={state.actionsUsed} />
+          <Stat icon={<Box size={16} />} label="Blocks" value={state.blocksUsed} />
+          <Stat
+            icon={<AlertTriangle size={16} />}
+            label="Wall hits"
+            value={`${state.wallHits}/${state.wallHitLimit}`}
+            warning={state.wallHits >= state.wallHitLimit - 1}
+          />
+          <Stat
+            icon={sealed === state.hotspots.length ? <CheckCircle2 size={16} /> : <Target size={16} />}
+            label="Hotspots"
+            value={`${sealed}/${state.hotspots.length}`}
+          />
+        </div>
       </div>
-      <div className="hud-grid">
-        <Stat
-          icon={<Timer size={16} />}
-          label="Meltdown"
-          value={state.meltdownTicks}
-          warning={state.meltdownTicks <= 8}
-        />
-        <Stat
-          icon={<Radiation size={16} />}
-          label="Radiation"
-          value={Math.round(state.plantRadiation)}
-          warning={state.plantRadiation > state.maze.baseRadiation + 35}
-        />
-        <Stat
-          icon={<Activity size={16} />}
-          label="Reduced"
-          value={Math.round(state.radiationReduced)}
-        />
-        <Stat icon={<Droplet size={16} />} label="Foam" value={state.foamCharges} />
-        <Stat icon={<Move size={16} />} label="Actions" value={state.actionsUsed} />
-        <Stat icon={<Box size={16} />} label="Blocks" value={state.blocksUsed} />
-        <Stat
-          icon={<AlertTriangle size={16} />}
-          label="Wall hits"
-          value={`${state.wallHits}/${state.wallHitLimit}`}
-          warning={state.wallHits >= state.wallHitLimit - 1}
-        />
-        <Stat
-          icon={sealed === state.hotspots.length ? <CheckCircle2 size={16} /> : <Target size={16} />}
-          label="Hotspots"
-          value={`${sealed}/${state.hotspots.length}`}
-        />
-      </div>
-      {controls ? <div className="header-controls">{controls}</div> : null}
-    </header>
+    </>
   );
 }

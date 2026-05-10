@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrthographicCamera, PerspectiveCamera } from "@react-three/drei";
+import { OrthographicCamera, PerspectiveCamera, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { getNextPosition, isWall, samePosition } from "../game/mazeGenerator";
 import { Direction, GameState, Hotspot, Position } from "../game/types";
@@ -26,20 +26,81 @@ const directionVectors: Record<Direction, THREE.Vector3> = {
   west: new THREE.Vector3(-1, 0, 0)
 };
 
+const WALL_TEXTURE_PATHS = [
+  "/images/wall1.jpg",
+  "/images/wall2.jpg",
+  "/images/wall4.jpg"
+];
+const REACTOR_BACKDROP_PATH = "/images/reactor-backdrop.jpg";
+const BACKDROP_DISTANCE = 22;
+const BACKDROP_VERTICAL_OFFSET = 1.65;
+
+useTexture.preload(WALL_TEXTURE_PATHS);
+useTexture.preload(REACTOR_BACKDROP_PATH);
+
 const toWorld = (maze: GameState["maze"], position: Position): [number, number, number] => [
   position.x - maze.width / 2 + 0.5,
   0,
   position.y - maze.height / 2 + 0.5
 ];
 
-const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
-
 const getCameraFocus = (maze: GameState["maze"], position: Position): THREE.Vector3 => {
   const focus = new THREE.Vector3(...toWorld(maze, position));
   const centerBias = maze.width <= 9 ? 0.16 : 0.04;
   return focus.lerp(new THREE.Vector3(0, 0, 0), centerBias);
 };
+
+const hashWallCell = (seed: string, x: number, y: number): number => {
+  const key = `${seed}:${x}:${y}`;
+  let hash = 2166136261;
+
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+};
+
+const getWallTextureIndex = (seed: string, x: number, y: number): 0 | 1 | 2 => {
+  const bucket = hashWallCell(seed, x, y) % 10;
+
+  if (bucket < 5) {
+    return 2;
+  }
+
+  return bucket === 5 ? 1 : 0;
+};
+
+function useWallTextures() {
+  const textures = useTexture(WALL_TEXTURE_PATHS);
+
+  return useMemo(() => {
+    textures.forEach((texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1, 1);
+      texture.anisotropy = 4;
+      texture.needsUpdate = true;
+    });
+
+    return textures;
+  }, [textures]);
+}
+
+function useBackdropTexture() {
+  const texture = useTexture(REACTOR_BACKDROP_PATH);
+
+  return useMemo(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 4;
+    texture.needsUpdate = true;
+    return texture;
+  }, [texture]);
+}
 
 function OverheadCameraRig({ state }: { state: GameState }) {
   const { camera, size } = useThree();
@@ -182,10 +243,63 @@ function RobotHeadlamp({ state }: { state: GameState }) {
       ref={light}
       position={target.toArray()}
       color="#b9fff2"
-      intensity={1.9}
-      distance={6.2}
+      intensity={1.45}
+      distance={5.6}
       decay={1.65}
     />
+  );
+}
+
+function ReactorBackdrop({ state }: { state: GameState }) {
+  const texture = useBackdropTexture();
+  const mesh = useRef<THREE.Mesh>(null);
+  const drift = useRef(new THREE.Vector2(0, 0));
+  const { camera, size } = useThree();
+
+  useFrame(() => {
+    if (!mesh.current) return;
+
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    const targetDrift = new THREE.Vector2(
+      (state.maze.start.x - state.position.x) * 0.16 +
+        (state.position.y - state.maze.start.y) * 0.06,
+      Math.min(0.34, Math.max(0, state.pathTrace.length - 1) * 0.012)
+    );
+    const driftSpeed = state.executionStatus === "running" ? 0.024 : 0.08;
+    drift.current.lerp(targetDrift, driftSpeed);
+
+    mesh.current.position
+      .copy(camera.position)
+      .add(forward.multiplyScalar(BACKDROP_DISTANCE))
+      .add(right.multiplyScalar(drift.current.x))
+      .add(up.multiplyScalar(BACKDROP_VERTICAL_OFFSET + drift.current.y));
+    mesh.current.quaternion.copy(camera.quaternion);
+
+    const fov =
+      camera instanceof THREE.PerspectiveCamera
+        ? THREE.MathUtils.degToRad(camera.fov)
+        : THREE.MathUtils.degToRad(62);
+    const height = Math.tan(fov / 2) * BACKDROP_DISTANCE * 2.25;
+    const width = height * Math.max(1, size.width / Math.max(1, size.height));
+    mesh.current.scale.set(width, height, 1);
+  });
+
+  return (
+    <mesh ref={mesh} renderOrder={-10}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial
+        map={texture}
+        color="#d7eef0"
+        depthWrite={false}
+        fog={false}
+        opacity={0.84}
+        side={THREE.DoubleSide}
+        toneMapped={false}
+        transparent
+      />
+    </mesh>
   );
 }
 
@@ -208,16 +322,32 @@ function FloorTile({
   );
 }
 
-function WallBlock({ position }: { position: [number, number, number] }) {
+function WallBlock({
+  position,
+  texture
+}: {
+  position: [number, number, number];
+  texture: THREE.Texture;
+}) {
   return (
     <group position={[position[0], 0.48, position[2]]}>
       <mesh castShadow receiveShadow>
         <boxGeometry args={[1, 0.96, 1]} />
-        <meshStandardMaterial color="#566271" roughness={0.74} metalness={0.18} />
+        <meshStandardMaterial
+          map={texture}
+          color="#ffffff"
+          roughness={0.78}
+          metalness={0.08}
+        />
       </mesh>
       <mesh position={[0, 0.52, 0]}>
         <boxGeometry args={[0.88, 0.07, 0.88]} />
-        <meshStandardMaterial color="#687585" roughness={0.6} metalness={0.2} />
+        <meshStandardMaterial
+          map={texture}
+          color="#ffffff"
+          roughness={0.7}
+          metalness={0.08}
+        />
       </mesh>
     </group>
   );
@@ -404,6 +534,7 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
 }
 
 function MazeScene({ state, viewMode }: GameSceneProps) {
+  const wallTextures = useWallTextures();
   const cameraDistance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
   const cameraFocus = useMemo(
     () => getCameraFocus(state.maze, state.maze.start),
@@ -457,12 +588,14 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
           <RobotCameraRig state={state} />
         </>
       )}
-      <ambientLight intensity={viewMode === "robot" ? 0.7 : 0.55} />
+      {viewMode === "robot" ? <fog attach="fog" args={["#071016", 3.2, 15]} /> : null}
+      {viewMode === "robot" ? <ReactorBackdrop state={state} /> : null}
+      <ambientLight intensity={viewMode === "robot" ? 0.38 : 0.55} />
       {viewMode === "robot" ? <RobotHeadlamp state={state} /> : null}
       <directionalLight
         castShadow
         position={[4, 9, 6]}
-        intensity={1.05}
+        intensity={viewMode === "robot" ? 0.72 : 1.05}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
@@ -471,7 +604,11 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
         row.map((cell) => {
           const world = toWorld(state.maze, { x: cell.x, y: cell.y });
           return cell.wall ? (
-            <WallBlock key={`${cell.x}-${cell.y}`} position={world} />
+            <WallBlock
+              key={`${cell.x}-${cell.y}`}
+              position={world}
+              texture={wallTextures[getWallTextureIndex(state.seed, cell.x, cell.y)]}
+            />
           ) : (
             <FloorTile
               key={`${cell.x}-${cell.y}`}
