@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
+  Bot,
   Github,
   Info,
   Map as MapIcon,
@@ -65,6 +66,28 @@ import {
 
 const GITHUB_REPO_URL = "https://github.com/codeplant-sa/reactor-logic";
 const START_FACING_PREFERENCE: Direction[] = ["east", "south", "north", "west"];
+const TRAINING_LEVEL_COUNT = 3;
+const FIRST_GENERATED_LEVEL = TRAINING_LEVEL_COUNT + 1;
+const TRAINING_COMPLETE_STORAGE_KEY = "reactor-logic.training-complete";
+
+const readTrainingComplete = (): boolean => {
+  try {
+    return window.localStorage.getItem(TRAINING_COMPLETE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
+const writeTrainingComplete = () => {
+  try {
+    window.localStorage.setItem(TRAINING_COMPLETE_STORAGE_KEY, "true");
+  } catch {
+    // Local storage can be unavailable in private browsing or locked-down embeds.
+  }
+};
+
+const getStartingLevel = (): number =>
+  readTrainingComplete() ? FIRST_GENERATED_LEVEL : 1;
 
 const chooseStartFacing = (maze: GameState["maze"]): Direction =>
   START_FACING_PREFERENCE.find(
@@ -456,6 +479,7 @@ function CodePlantCorner() {
 export default function App() {
   const [selectedRobot, setSelectedRobot] = useState<RobotConfig | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
+  const [trainingComplete, setTrainingComplete] = useState(readTrainingComplete);
   const [assetsReady, setAssetsReady] = useState(false);
   const [briefingEntered, setBriefingEntered] = useState(false);
   const [preloadProgress, setPreloadProgress] = useState<PreloadProgress>({
@@ -464,9 +488,10 @@ export default function App() {
     label: "Starting asset check"
   });
   const [preloadError, setPreloadError] = useState<string | undefined>();
-  const [level, setLevel] = useState(1);
+  const [level, setLevel] = useState(getStartingLevel);
   const [seedDraft, setSeedDraft] = useState("");
   const [trayOpen, setTrayOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(true);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("robot");
   const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
@@ -573,6 +598,17 @@ export default function App() {
     const timer = window.setInterval(() => executeStep("running"), 420);
     return () => window.clearInterval(timer);
   }, [executeStep, game?.executionStatus]);
+
+  useEffect(() => {
+    if (
+      !trainingComplete &&
+      game?.executionStatus === "success" &&
+      game.level >= TRAINING_LEVEL_COUNT
+    ) {
+      writeTrainingComplete();
+      setTrainingComplete(true);
+    }
+  }, [game?.executionStatus, game?.level, trainingComplete]);
 
   const handleProgramChange = (program: ProgramBlock[]) => {
     resetRuntime();
@@ -686,7 +722,10 @@ export default function App() {
       }
 
       if (!response.ok) {
-        throw new Error(readCopilotError(payload) ?? "Copilot request failed.");
+        throw new Error(
+          readCopilotError(payload) ??
+            `Copilot request failed (${response.status} ${response.statusText}).`
+        );
       }
 
       return payload as CopilotResponse;
@@ -740,7 +779,14 @@ export default function App() {
         <CodePlantCorner />
         <div className="landing-inner">
           <MissionBriefing />
-          <RobotSelect onSelect={(robot) => beginMission(robot, 1)} />
+          <RobotSelect
+            onSelect={(robot) =>
+              beginMission(
+                robot,
+                trainingComplete ? FIRST_GENERATED_LEVEL : 1
+              )
+            }
+          />
         </div>
       </main>
     );
@@ -750,6 +796,20 @@ export default function App() {
     <main className="game-layout">
       <HUD
         state={game}
+        bottomLeading={
+          <button
+            type="button"
+            className={`hud-copilot-toggle ${copilotOpen ? "active" : ""}`}
+            aria-pressed={copilotOpen}
+            aria-expanded={copilotOpen}
+            aria-controls="ai-copilot-drawer"
+            title="Toggle AI Copilot"
+            onClick={() => setCopilotOpen((open) => !open)}
+          >
+            <Bot size={15} />
+            <span>Copilot</span>
+          </button>
+        }
         controls={
           <>
             <button
@@ -920,11 +980,18 @@ export default function App() {
           </>
         ) : null}
       </aside>
-      <aside className="side-panel">
+      <aside
+        id="ai-copilot-drawer"
+        className={`copilot-drawer ${copilotOpen ? "open" : ""}`}
+        aria-hidden={!copilotOpen}
+      >
         <AiCopilot
           disabled={game.executionStatus === "running"}
           onAsk={askCopilot}
+          onClose={() => setCopilotOpen(false)}
         />
+      </aside>
+      <aside className="side-panel">
         <div className="editor-grid">
           <BlockPalette
             onAddBlock={(block) =>

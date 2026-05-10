@@ -15,6 +15,7 @@ import { GameState } from "../game/types";
 interface HUDProps {
   state: GameState;
   controls?: React.ReactNode;
+  bottomLeading?: React.ReactNode;
 }
 
 const StatusPill = ({ state }: { state: GameState }) => {
@@ -46,7 +47,7 @@ const Stat = ({
   </div>
 );
 
-export default function HUD({ state, controls }: HUDProps) {
+export default function HUD({ state, controls, bottomLeading }: HUDProps) {
   const sealed = state.hotspots.filter((hotspot) => hotspot.sealed).length;
   const missionTitle = state.maze.trainingGuide
     ? `Training L${state.level}: ${state.maze.trainingGuide.focus}`
@@ -63,6 +64,7 @@ export default function HUD({ state, controls }: HUDProps) {
       </header>
       <div className="bottom-hud" aria-label="Mission values">
         <div className="hud-grid">
+          {bottomLeading}
           <Stat
             icon={<Timer size={16} />}
             label="Meltdown"

@@ -73,6 +73,56 @@ const commandsToPseudoCode = (commands: CopilotRouteCommand[]): string =>
     })
     .join("\n");
 
+const commandToAdvancedPseudoLines = (
+  command: CopilotRouteCommand
+): string[] => {
+  if (command.action === "deployFoam") {
+    return ["call seal_if_present()"];
+  }
+
+  const name = commandLabel[command.action];
+  if (command.action === "moveForward" && (command.count ?? 1) > 1) {
+    return [`repeat ${command.count}:`, `    ${name}()`];
+  }
+
+  return [`${name}()`];
+};
+
+const commandsToAdvancedPseudoCode = (
+  commands: CopilotRouteCommand[],
+  hotspotsToSeal: number
+): string => {
+  if (commands.length === 0) {
+    return hotspotsToSeal > 0
+      ? "def seal_if_present():\n    if on_hotspot():\n        deploy_foam()\n\nwhile hotspots_left > 0:\n    call seal_if_present()"
+      : "# Robot is already at extraction.";
+  }
+
+  const routeLines = commands.flatMap(commandToAdvancedPseudoLines);
+  const routeBody = routeLines.map((line) => `    ${line}`);
+
+  if (hotspotsToSeal > 0) {
+    return [
+      "def seal_if_present():",
+      "    if on_hotspot():",
+      "        deploy_foam()",
+      "",
+      "def run_shortest_route():",
+      ...routeBody,
+      "",
+      "while hotspots_left > 0:",
+      "    call run_shortest_route()"
+    ].join("\n");
+  }
+
+  return [
+    "def run_shortest_route():",
+    ...routeBody,
+    "",
+    "call run_shortest_route()"
+  ].join("\n");
+};
+
 const turnsToFace = (
   from: Direction,
   to: Direction
@@ -265,7 +315,8 @@ export const planShortestPath = (state: GameState): CopilotShortestPath => {
     moveDirections: [],
     waypoints: [],
     commands: [],
-    pseudoCode: ""
+    pseudoCode: "",
+    advancedPseudoCode: ""
   };
 
   if (state.foamCharges < foamRequired) {
@@ -299,6 +350,7 @@ export const planShortestPath = (state: GameState): CopilotShortestPath => {
     moveDirections,
     waypoints: buildWaypoints(path, hotspots, state.maze.extraction),
     commands,
-    pseudoCode: commandsToPseudoCode(commands)
+    pseudoCode: commandsToPseudoCode(commands),
+    advancedPseudoCode: commandsToAdvancedPseudoCode(commands, hotspots.length)
   };
 };

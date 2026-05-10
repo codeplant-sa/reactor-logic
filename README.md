@@ -5,6 +5,7 @@ Expandable React, TypeScript, and Three.js browser game prototype for teaching b
 ## Gameplay
 
 Program a response robot through a compromised fictional coastal research reactor maze. The player chooses a robot, assembles command blocks, previews Python-like pseudocode, then runs or steps through the program to seal stabilizing-foam hotspots and reach extraction before the turn-based meltdown timer expires. The first three levels are fixed training missions with reference solutions that introduce sequence, repeat/if logic, then procedure and while patterns.
+After level 3 is completed, the browser stores training completion in `localStorage` and future robot runs start at level 4, where generated levels begin.
 
 ![Robot selection and mission briefing](docs/screenshots/intro.png)
 
@@ -34,7 +35,7 @@ npm run build
 
 ## Cloudflare Pages
 
-This project is configured to build as a Cloudflare Pages app with a Pages Function for the AI Copilot. The copilot posts a compact maze/program snapshot to `/api/copilot`, including a deterministic shortest-route plan through all unsealed hotspots to extraction, then calls Workers AI with `@cf/moonshotai/kimi-k2.6` through the `AI` binding.
+This project is configured to build as a Cloudflare Pages app with a Pages Function for the AI Copilot. The copilot posts a compact maze/program snapshot to `/api/copilot`, including a deterministic shortest-route plan through all unsealed hotspots to extraction, then calls Workers AI with `@cf/google/gemma-4-26b-a4b-it` through the `AI` binding.
 
 Cloudflare Pages Git settings:
 
@@ -49,7 +50,7 @@ Local Pages preview:
 npm run pages:preview
 ```
 
-The plain webpack dev server does not serve Pages Functions, so the AI Copilot endpoint is available through Cloudflare Pages preview/deploy.
+The deployed Cloudflare Pages project must have a Workers AI binding named `AI` in the Pages dashboard. The plain webpack dev server does not serve Pages Functions, so the AI Copilot endpoint is available through Cloudflare Pages preview/deploy.
 Workers AI calls use your Cloudflare account in local Pages preview; the `pages:preview` script exposes the `AI` binding with `--ai AI`.
 
 Direct upload deploy with Wrangler:

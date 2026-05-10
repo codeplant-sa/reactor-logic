@@ -5,7 +5,8 @@ export type CopilotMode =
   | "review"
   | "next_step"
   | "explain"
-  | "shortest_path";
+  | "shortest_path"
+  | "solve";
 
 export interface CopilotHotspotSnapshot {
   id: string;
@@ -54,6 +55,7 @@ export interface CopilotShortestPath {
   waypoints: CopilotRouteWaypoint[];
   commands: CopilotRouteCommand[];
   pseudoCode: string;
+  advancedPseudoCode: string;
 }
 
 export interface CopilotSnapshot {
