@@ -77,12 +77,53 @@ const COPILOT_FLOAT_MARGIN = 12;
 const COPILOT_FLOAT_WIDTH = 390;
 const COPILOT_FLOAT_DEFAULT_HEIGHT = 340;
 const COPILOT_FLOAT_MIN_VISIBLE_HEIGHT = 160;
+const PINNED_MINIMAP_STORAGE_KEY = "reactor-logic.pinned-minimap";
+const PINNED_MINIMAP_MARGIN = 10;
 
 interface CopilotFloatState {
   x: number;
   y: number;
   pinned: boolean;
 }
+
+interface OverlayPosition {
+  x: number;
+  y: number;
+}
+
+const DEFAULT_PINNED_MINIMAP_POSITION: OverlayPosition = { x: 24, y: 24 };
+
+const readPinnedMinimapPosition = (): OverlayPosition => {
+  try {
+    const raw = window.localStorage.getItem(PINNED_MINIMAP_STORAGE_KEY);
+    if (!raw) return DEFAULT_PINNED_MINIMAP_POSITION;
+
+    const parsed = JSON.parse(raw) as Partial<OverlayPosition>;
+    const x = parsed.x;
+    const y = parsed.y;
+    if (typeof x !== "number" || typeof y !== "number") {
+      return DEFAULT_PINNED_MINIMAP_POSITION;
+    }
+
+    return { x, y };
+  } catch {
+    return DEFAULT_PINNED_MINIMAP_POSITION;
+  }
+};
+
+const writePinnedMinimapPosition = (position: OverlayPosition) => {
+  try {
+    window.localStorage.setItem(
+      PINNED_MINIMAP_STORAGE_KEY,
+      JSON.stringify({
+        x: Math.round(position.x),
+        y: Math.round(position.y)
+      })
+    );
+  } catch {
+    // Local storage can be unavailable in private browsing or locked-down embeds.
+  }
+};
 
 const getCopilotPanelWidth = (): number => {
   if (typeof window === "undefined") return COPILOT_FLOAT_WIDTH;
@@ -641,6 +682,9 @@ export default function App() {
   const [trayOpen, setTrayOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [copilotFloat, setCopilotFloat] = useState(readCopilotFloatState);
+  const [pinnedMinimapPosition, setPinnedMinimapPosition] = useState(
+    readPinnedMinimapPosition
+  );
   const [showMissionSummary, setShowMissionSummary] = useState(false);
   const [levelTransitionLabel, setLevelTransitionLabel] = useState<string | null>(
     null
@@ -652,6 +696,13 @@ export default function App() {
     useState<PaletteAddRequest | null>(null);
   const runtimeRef = useRef<ExecutionRuntime | null>(null);
   const levelTransitionTimerRef = useRef<number | null>(null);
+  const playfieldRef = useRef<HTMLElement | null>(null);
+  const pinnedMinimapRef = useRef<HTMLDivElement | null>(null);
+  const pinnedMinimapDragRef = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
   const copilotPanelRef = useRef<HTMLElement | null>(null);
   const copilotDragRef = useRef<{
     pointerId: number;
@@ -1050,6 +1101,117 @@ export default function App() {
     [copilotFloat.pinned]
   );
 
+  const clampPinnedMinimapPosition = useCallback(
+    (position: OverlayPosition): OverlayPosition => {
+      const playfield = playfieldRef.current;
+      if (!playfield) return position;
+
+      const minimap = pinnedMinimapRef.current;
+      const minimapWidth = minimap?.offsetWidth ?? 248;
+      const minimapHeight = minimap?.offsetHeight ?? 248;
+      const maxX = Math.max(
+        PINNED_MINIMAP_MARGIN,
+        playfield.clientWidth - minimapWidth - PINNED_MINIMAP_MARGIN
+      );
+      const maxY = Math.max(
+        PINNED_MINIMAP_MARGIN,
+        playfield.clientHeight - minimapHeight - PINNED_MINIMAP_MARGIN
+      );
+
+      return {
+        x: Math.min(Math.max(position.x, PINNED_MINIMAP_MARGIN), maxX),
+        y: Math.min(Math.max(position.y, PINNED_MINIMAP_MARGIN), maxY)
+      };
+    },
+    []
+  );
+
+  const beginPinnedMinimapDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+
+      const minimap = pinnedMinimapRef.current;
+      if (!minimap) return;
+
+      const rect = minimap.getBoundingClientRect();
+      pinnedMinimapDragRef.current = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    []
+  );
+
+  const movePinnedMinimapDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = pinnedMinimapDragRef.current;
+      const playfield = playfieldRef.current;
+      if (!drag || drag.pointerId !== event.pointerId || !playfield) return;
+
+      const playfieldRect = playfield.getBoundingClientRect();
+      setPinnedMinimapPosition((previous) =>
+        clampPinnedMinimapPosition({
+          ...previous,
+          x: event.clientX - playfieldRect.left - drag.offsetX,
+          y: event.clientY - playfieldRect.top - drag.offsetY
+        })
+      );
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [clampPinnedMinimapPosition]
+  );
+
+  const finishPinnedMinimapDrag = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = pinnedMinimapDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      pinnedMinimapDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      setPinnedMinimapPosition((previous) => {
+        const next = clampPinnedMinimapPosition(previous);
+        writePinnedMinimapPosition(next);
+        return next;
+      });
+      event.stopPropagation();
+    },
+    [clampPinnedMinimapPosition]
+  );
+
+  const nudgePinnedMinimap = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = event.shiftKey ? 32 : 12;
+      const movement: Record<string, [number, number]> = {
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0]
+      };
+      const delta = movement[event.key];
+      if (!delta) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setPinnedMinimapPosition((previous) => {
+        const next = clampPinnedMinimapPosition({
+          x: previous.x + delta[0],
+          y: previous.y + delta[1]
+        });
+        writePinnedMinimapPosition(next);
+        return next;
+      });
+    },
+    [clampPinnedMinimapPosition]
+  );
+
   useEffect(() => {
     const handleResize = () => {
       setCopilotFloat((previous) => {
@@ -1057,11 +1219,30 @@ export default function App() {
         writeCopilotFloatState(next);
         return next;
       });
+      setPinnedMinimapPosition((previous) => {
+        const next = clampPinnedMinimapPosition(previous);
+        writePinnedMinimapPosition(next);
+        return next;
+      });
     };
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [clampPinnedMinimapPosition]);
+
+  useEffect(() => {
+    if (!mapPinned) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      setPinnedMinimapPosition((previous) => {
+        const next = clampPinnedMinimapPosition(previous);
+        writePinnedMinimapPosition(next);
+        return next;
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [clampPinnedMinimapPosition, mapPinned]);
 
   useEffect(() => {
     if (!copilotOpen) return;
@@ -1237,11 +1418,34 @@ export default function App() {
           </>
         }
       />
-      <section className="playfield-zone">
+      <section className="playfield-zone" ref={playfieldRef}>
         <GameScene state={game} viewMode={cameraViewMode} />
         {mapPinned ? (
-          <div className="pinned-minimap" aria-label="Pinned minimap">
-            <MiniMap state={game} compact />
+          <div
+            ref={pinnedMinimapRef}
+            className="pinned-minimap"
+            style={{
+              left: Math.round(pinnedMinimapPosition.x),
+              top: Math.round(pinnedMinimapPosition.y)
+            }}
+            role="group"
+            aria-label="Pinned draggable minimap"
+            tabIndex={0}
+            title="Drag minimap"
+            onKeyDown={nudgePinnedMinimap}
+          >
+            <MiniMap
+              state={game}
+              compact
+              dragHandleProps={{
+                "aria-label": "Drag minimap",
+                onPointerDown: beginPinnedMinimapDrag,
+                onPointerMove: movePinnedMinimapDrag,
+                onPointerUp: finishPinnedMinimapDrag,
+                onPointerCancel: finishPinnedMinimapDrag,
+                title: "Drag minimap"
+              }}
+            />
           </div>
         ) : null}
       </section>

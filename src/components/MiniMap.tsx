@@ -1,20 +1,37 @@
 import React from "react";
+import { GripVertical } from "lucide-react";
 import { positionKey, samePosition } from "../game/mazeGenerator";
 import { GameState, Position } from "../game/types";
 
 interface MiniMapProps {
   state: GameState;
   compact?: boolean;
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 const hasPosition = (items: Position[], position: Position): boolean =>
   items.some((item) => samePosition(item, position));
 
-export default function MiniMap({ state, compact = false }: MiniMapProps) {
+export default function MiniMap({
+  state,
+  compact = false,
+  dragHandleProps
+}: MiniMapProps) {
   const trace = new Set(state.pathTrace.map(positionKey));
   const seedLabel = compact
     ? `L${state.level}`
     : `${state.maze.width} x ${state.maze.height}`;
+  const {
+    className: dragHandleClassName,
+    title: dragHandleTitle,
+    ...restDragHandleProps
+  } = dragHandleProps ?? {};
+  const minimapDragHandleClassName = [
+    "minimap-drag-handle",
+    dragHandleClassName
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section
@@ -22,7 +39,18 @@ export default function MiniMap({ state, compact = false }: MiniMapProps) {
       aria-label="Mission minimap"
     >
       <div className="panel-heading minimap-heading">
-        <span>Minimap</span>
+        {dragHandleProps ? (
+          <div
+            {...restDragHandleProps}
+            className={minimapDragHandleClassName}
+            title={dragHandleTitle ?? "Drag minimap"}
+          >
+            <GripVertical size={15} aria-hidden />
+            <span>Minimap</span>
+          </div>
+        ) : (
+          <span>Minimap</span>
+        )}
         <small>{seedLabel}</small>
       </div>
       {!compact ? (

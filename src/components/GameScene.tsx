@@ -1,7 +1,12 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera, PerspectiveCamera, useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 import floorTextureUrl from "../../public/images/floor1.jpg";
 import labWallTextureUrl from "../../public/images/lab1.jpg";
 import labWallTextureTwoUrl from "../../public/images/lab2.jpg";
@@ -56,7 +61,11 @@ const WALL_TOP_TEXTURE_PATH = floorTextureUrl;
 const LAB_ROOF_HEIGHT = 3.35;
 const LAB_ROOF_PADDING = 8;
 const LAB_ROOF_PANEL_SPACING = 2.4;
-const OFFICE_BACKGROUND_REPEAT = 3;
+const EARLY_BACKDROP_PADDING = 8;
+const EARLY_BACKDROP_HEIGHT = 5.8;
+const EARLY_BACKDROP_TILE_SIZE = 3.2;
+const FOAM_EFFECT_DURATION_MS = 1300;
+const WATER_NORMAL_TEXTURE_SIZE = 128;
 const DOME_BASE_HEIGHT = 1.28;
 const DOME_CAP_HEIGHT = 11.4;
 const DOME_MIN_RADIUS = 19;
@@ -93,6 +102,173 @@ const DOME_STRIP_LIGHTS = [
   [-0.58, -0.48, 0.12],
   [0.62, -0.42, -0.16]
 ] as const;
+
+const CRTShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    time: { value: 0 },
+    resolution: { value: new THREE.Vector2(1, 1) }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float time;
+    uniform vec2 resolution;
+    varying vec2 vUv;
+
+    float rand(vec2 co) {
+      return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+
+    void main() {
+      vec2 uv = vUv;
+
+      vec2 cc = uv - 0.5;
+      float dist = dot(cc, cc);
+      uv = uv + cc * dist * 0.22;
+
+      if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+
+      float chromaOffset = 0.0024;
+      float r = texture2D(tDiffuse, uv + vec2(chromaOffset, 0.0)).r;
+      float g = texture2D(tDiffuse, uv).g;
+      float b = texture2D(tDiffuse, uv - vec2(chromaOffset, 0.0)).b;
+      vec3 color = vec3(r, g, b);
+
+      float scanline = sin(uv.y * resolution.y * 1.45) * 0.065;
+      color -= scanline;
+
+      float noise = rand(uv * (time * 34.0 + 1.0)) * 0.035;
+      color += noise;
+
+      color *= 0.97 + 0.035 * sin(time * 20.0);
+
+      float vignette = smoothstep(0.82, 0.26, length(cc));
+      color *= vignette;
+
+      color = pow(max(color, vec3(0.0)), vec3(0.96));
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `
+};
+
+const createWaterReflectorShader = (normalMap: THREE.Texture) => ({
+  name: "ReactorWaterReflectorShader",
+  uniforms: {
+    color: { value: null },
+    tDiffuse: { value: null },
+    textureMatrix: { value: null },
+    time: { value: 0 },
+    normalMap: { value: normalMap }
+  },
+  vertexShader: /* glsl */ `
+    uniform mat4 textureMatrix;
+    varying vec4 vUv;
+
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+
+    void main() {
+      vUv = textureMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform vec3 color;
+    uniform sampler2D tDiffuse;
+    uniform sampler2D normalMap;
+    uniform float time;
+    varying vec4 vUv;
+
+    #include <logdepthbuf_pars_fragment>
+
+    float blendOverlay(float base, float blend) {
+      return base < 0.5
+        ? 2.0 * base * blend
+        : 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+    }
+
+    vec3 blendOverlay(vec3 base, vec3 blend) {
+      return vec3(
+        blendOverlay(base.r, blend.r),
+        blendOverlay(base.g, blend.g),
+        blendOverlay(base.b, blend.b)
+      );
+    }
+
+    void main() {
+      #include <logdepthbuf_fragment>
+
+      vec2 rippleUv = vUv.xy / max(vUv.w, 0.0001);
+      vec2 flow = vec2(time * 0.035, time * 0.018);
+
+      vec3 n1 = texture2D(normalMap, rippleUv * 5.8 + flow).rgb;
+      vec3 n2 = texture2D(normalMap, rippleUv * 10.5 - flow.yx).rgb;
+      vec2 distortion = ((n1.rg + n2.rg) - 1.0) * 0.028;
+
+      vec4 projectedUv = vUv + vec4(distortion * vUv.w, 0.0, 0.0);
+      vec4 base = texture2DProj(tDiffuse, projectedUv);
+      base.rgb *= vec3(0.66, 0.86, 1.05);
+      base.rgb += 0.055;
+
+      float shimmer = sin((rippleUv.x + rippleUv.y) * 48.0 + time * 4.5) * 0.025;
+      base.rgb += shimmer;
+
+      vec3 reflected = blendOverlay(base.rgb, color);
+      gl_FragColor = vec4(reflected, 1.0);
+
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }
+  `
+});
+
+const createProceduralWaterNormalTexture = (): THREE.DataTexture => {
+  const size = WATER_NORMAL_TEXTURE_SIZE;
+  const data = new Uint8Array(size * size * 4);
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const u = x / size;
+      const v = y / size;
+      const waveA = Math.sin((u * 18 + v * 4) * Math.PI * 2);
+      const waveB = Math.cos((v * 15 - u * 3) * Math.PI * 2);
+      const waveC = Math.sin((u + v) * Math.PI * 34);
+      const normalX = waveA * 0.34 + waveC * 0.16;
+      const normalY = waveB * 0.34 - waveC * 0.14;
+      const offset = (y * size + x) * 4;
+
+      data[offset] = Math.round((normalX * 0.5 + 0.5) * 255);
+      data[offset + 1] = Math.round((normalY * 0.5 + 0.5) * 255);
+      data[offset + 2] = 255;
+      data[offset + 3] = 255;
+    }
+  }
+
+  const texture = new THREE.DataTexture(
+    data,
+    size,
+    size,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType
+  );
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8);
+  texture.needsUpdate = true;
+  return texture;
+};
 
 useTexture.preload(WALL_TEXTURE_PATHS);
 useTexture.preload(WALL_TOP_TEXTURE_PATH);
@@ -183,30 +359,91 @@ function useWallTopTexture() {
   }, [texture]);
 }
 
-function SceneBackground({ useOfficeTexture }: { useOfficeTexture: boolean }) {
+function SceneBackground({
+  earlyLevel,
+  viewMode
+}: {
+  earlyLevel: boolean;
+  viewMode: CameraViewMode;
+}) {
+  const backgroundColor =
+    earlyLevel && viewMode === "overhead" ? "#1d2832" : earlyLevel ? "#eef4f2" : "#243342";
+
+  return (
+    <color attach="background" args={[backgroundColor]} />
+  );
+}
+
+function EarlyLevelParallaxBackdrop({ maze }: { maze: GameState["maze"] }) {
   const sourceTexture = useTexture(officeWallTextureUrl);
-  const officeBackgroundTexture = useMemo(() => {
+  const width = Math.max(maze.width + EARLY_BACKDROP_PADDING, 18);
+  const depth = Math.max(maze.height + EARLY_BACKDROP_PADDING, 18);
+  const backdropExtent = Math.max(width, depth);
+  const centerY = EARLY_BACKDROP_HEIGHT / 2 - 0.08;
+  const backdropTexture = useMemo(() => {
     const texture = sourceTexture.clone();
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(OFFICE_BACKGROUND_REPEAT, OFFICE_BACKGROUND_REPEAT);
+    texture.repeat.set(
+      Math.max(3, backdropExtent / EARLY_BACKDROP_TILE_SIZE),
+      Math.max(2, EARLY_BACKDROP_HEIGHT / EARLY_BACKDROP_TILE_SIZE)
+    );
     texture.anisotropy = 4;
     texture.needsUpdate = true;
     return texture;
-  }, [sourceTexture]);
+  }, [backdropExtent, sourceTexture]);
 
   useEffect(
     () => () => {
-      officeBackgroundTexture.dispose();
+      backdropTexture.dispose();
     },
-    [officeBackgroundTexture]
+    [backdropTexture]
   );
 
-  return useOfficeTexture ? (
-    <primitive attach="background" object={officeBackgroundTexture} />
-  ) : (
-    <color attach="background" args={["#243342"]} />
+  return (
+    <group renderOrder={-40}>
+      <mesh position={[0, centerY, -depth / 2]}>
+        <planeGeometry args={[width, EARLY_BACKDROP_HEIGHT]} />
+        <meshBasicMaterial
+          map={backdropTexture}
+          color="#ffffff"
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[0, centerY, depth / 2]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[width, EARLY_BACKDROP_HEIGHT]} />
+        <meshBasicMaterial
+          map={backdropTexture}
+          color="#ffffff"
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[-width / 2, centerY, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <planeGeometry args={[depth, EARLY_BACKDROP_HEIGHT]} />
+        <meshBasicMaterial
+          map={backdropTexture}
+          color="#ffffff"
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[width / 2, centerY, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[depth, EARLY_BACKDROP_HEIGHT]} />
+        <meshBasicMaterial
+          map={backdropTexture}
+          color="#ffffff"
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }
 
@@ -233,6 +470,46 @@ function OverheadCameraRig({ state }: { state: GameState }) {
       camera.updateProjectionMatrix();
     }
   });
+
+  return null;
+}
+
+function RobotCRTPostProcessing() {
+  const { gl, scene, camera, size } = useThree();
+  const passes = useMemo(() => {
+    const composer = new EffectComposer(gl);
+    const renderPass = new RenderPass(scene, camera);
+    const crtPass = new ShaderPass(CRTShader);
+    const outputPass = new OutputPass();
+
+    composer.addPass(renderPass);
+    composer.addPass(crtPass);
+    composer.addPass(outputPass);
+
+    return { composer, renderPass, crtPass };
+  }, [camera, gl, scene]);
+
+  useEffect(() => {
+    const pixelRatio = gl.getPixelRatio();
+    passes.composer.setSize(size.width, size.height);
+    passes.crtPass.uniforms.resolution.value.set(
+      size.width * pixelRatio,
+      size.height * pixelRatio
+    );
+  }, [gl, passes, size.height, size.width]);
+
+  useEffect(
+    () => () => {
+      passes.composer.dispose();
+    },
+    [passes]
+  );
+
+  useFrame(({ clock }) => {
+    passes.renderPass.camera = camera;
+    passes.crtPass.uniforms.time.value = clock.elapsedTime;
+    passes.composer.render();
+  }, 1);
 
   return null;
 }
@@ -1609,17 +1886,80 @@ function LabRoof({ maze }: { maze: GameState["maze"] }) {
   );
 }
 
-function MazeFloor({ maze }: { maze: GameState["maze"] }) {
+function MazeFloor({
+  maze,
+  earlyOverhead = false
+}: {
+  maze: GameState["maze"];
+  earlyOverhead?: boolean;
+}) {
   return (
     <mesh position={[0, -0.065, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[maze.width, maze.height]} />
       <meshStandardMaterial
-        color="#14212a"
-        roughness={0.86}
+        color={earlyOverhead ? "#23313b" : "#14212a"}
+        roughness={earlyOverhead ? 0.78 : 0.86}
         metalness={0.04}
       />
     </mesh>
   );
+}
+
+function ReactorWaterFloor({ maze }: { maze: GameState["maze"] }) {
+  const { gl, size } = useThree();
+  const waterNormals = useMemo(createProceduralWaterNormalTexture, []);
+  const reflector = useMemo(() => {
+    const pixelRatio = gl.getPixelRatio();
+    const textureWidth = Math.min(
+      1024,
+      Math.max(512, Math.round(size.width * pixelRatio))
+    );
+    const textureHeight = Math.min(
+      1024,
+      Math.max(512, Math.round(size.height * pixelRatio))
+    );
+    const geometry = new THREE.PlaneGeometry(
+      Math.max(maze.width + 0.2, 4),
+      Math.max(maze.height + 0.2, 4)
+    );
+    const water = new Reflector(geometry, {
+      textureWidth,
+      textureHeight,
+      color: 0x88aacc,
+      clipBias: 0.003,
+      multisample: 2,
+      shader: createWaterReflectorShader(waterNormals)
+    });
+
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = -0.052;
+    water.renderOrder = -2;
+    return water;
+  }, [gl, maze.height, maze.width, size.height, size.width, waterNormals]);
+
+  useFrame(({ clock }) => {
+    const material = reflector.material as THREE.ShaderMaterial;
+    if (material.uniforms.time) {
+      material.uniforms.time.value = clock.elapsedTime;
+    }
+  });
+
+  useEffect(
+    () => () => {
+      reflector.geometry.dispose();
+      reflector.dispose();
+    },
+    [reflector]
+  );
+
+  useEffect(
+    () => () => {
+      waterNormals.dispose();
+    },
+    [waterNormals]
+  );
+
+  return <primitive object={reflector} />;
 }
 
 function WallBlock({
@@ -1749,6 +2089,181 @@ function HotspotMarker({ maze, hotspot }: { maze: GameState["maze"]; hotspot: Ho
         />
       </mesh>
     </group>
+  );
+}
+
+interface FoamDeployEffectEvent {
+  id: string;
+  position: [number, number, number];
+  sealedHotspot: boolean;
+}
+
+const FOAM_BURST_BUBBLES = [
+  { offset: [0, 0] as const, radius: 0.34, lift: 0.54, delay: 0 },
+  { offset: [0.28, -0.1] as const, radius: 0.22, lift: 0.38, delay: 0.03 },
+  { offset: [-0.24, 0.15] as const, radius: 0.2, lift: 0.42, delay: 0.05 },
+  { offset: [0.1, 0.3] as const, radius: 0.18, lift: 0.34, delay: 0.08 },
+  { offset: [-0.32, -0.22] as const, radius: 0.16, lift: 0.36, delay: 0.1 },
+  { offset: [0.34, 0.24] as const, radius: 0.15, lift: 0.3, delay: 0.12 }
+];
+
+function FoamDeployEffect({ event }: { event: FoamDeployEffectEvent }) {
+  const startedAt = useRef<number | null>(null);
+  const bubbleRefs = useRef<THREE.Mesh[]>([]);
+  const shockwaveRef = useRef<THREE.Mesh>(null);
+  const shockwaveMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    if (startedAt.current === null) {
+      startedAt.current = clock.elapsedTime;
+    }
+
+    const elapsed = clock.elapsedTime - startedAt.current;
+
+    FOAM_BURST_BUBBLES.forEach((bubble, index) => {
+      const mesh = bubbleRefs.current[index];
+      if (!mesh) return;
+
+      const localElapsed = elapsed - bubble.delay;
+      if (localElapsed < 0) {
+        mesh.visible = false;
+        return;
+      }
+
+      const progress = clamp(localElapsed / 0.82, 0, 1);
+      mesh.visible = progress < 1;
+      mesh.position.set(
+        bubble.offset[0] * progress,
+        0.1 + bubble.lift * Math.sin(progress * Math.PI * 0.82),
+        bubble.offset[1] * progress
+      );
+      mesh.scale.setScalar(bubble.radius * THREE.MathUtils.lerp(0.55, 2.2, progress));
+
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.opacity = Math.max(0, 0.78 * (1 - progress));
+    });
+
+    if (lightRef.current) {
+      lightRef.current.intensity = Math.max(0, 2.4 * (1 - elapsed / 0.7));
+    }
+
+    if (shockwaveRef.current && shockwaveMaterialRef.current) {
+      const progress = clamp((elapsed - 0.1) / 0.74, 0, 1);
+      shockwaveRef.current.visible = event.sealedHotspot && progress < 1;
+      const scale = THREE.MathUtils.lerp(0.7, 3.6, progress);
+      shockwaveRef.current.scale.set(scale, scale, scale);
+      shockwaveMaterialRef.current.opacity = Math.max(0, 0.64 * (1 - progress));
+    }
+  });
+
+  return (
+    <group position={[event.position[0], 0.04, event.position[2]]}>
+      {FOAM_BURST_BUBBLES.map((bubble, index) => (
+        <mesh
+          key={`foam-bubble-${event.id}-${index}`}
+          ref={(mesh) => {
+            if (mesh) {
+              bubbleRefs.current[index] = mesh;
+            }
+          }}
+        >
+          <sphereGeometry args={[1, 14, 10]} />
+          <meshBasicMaterial
+            color={index % 2 === 0 ? "#f0fffb" : "#b8fff2"}
+            depthWrite={false}
+            opacity={0.72}
+            toneMapped={false}
+            transparent
+          />
+        </mesh>
+      ))}
+      {event.sealedHotspot ? (
+        <mesh ref={shockwaveRef} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.36, 0.52, 64]} />
+          <meshBasicMaterial
+            ref={shockwaveMaterialRef}
+            color="#9cffef"
+            depthWrite={false}
+            opacity={0.62}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+            transparent
+          />
+        </mesh>
+      ) : null}
+      <pointLight
+        ref={lightRef}
+        color="#cffff7"
+        decay={1.7}
+        distance={3.4}
+        intensity={2.4}
+      />
+    </group>
+  );
+}
+
+function FoamDeploymentEffects({ state }: { state: GameState }) {
+  const [events, setEvents] = useState<FoamDeployEffectEvent[]>([]);
+  const previousState = useRef<GameState | null>(null);
+  const timers = useRef<number[]>([]);
+
+  useEffect(
+    () => () => {
+      timers.current.forEach((timer) => window.clearTimeout(timer));
+      timers.current = [];
+    },
+    []
+  );
+
+  useEffect(() => {
+    const previous = previousState.current;
+    if (!previous || previous.level !== state.level || previous.seed !== state.seed) {
+      previousState.current = state;
+      setEvents([]);
+      return;
+    }
+
+    if (
+      state.actionsUsed < previous.actionsUsed ||
+      state.foamCharges > previous.foamCharges
+    ) {
+      previousState.current = state;
+      setEvents([]);
+      return;
+    }
+
+    if (state.foamCharges < previous.foamCharges) {
+      const sealedHotspot = state.hotspots.find((hotspot) => {
+        const previousHotspot = previous.hotspots.find(
+          (item) => item.id === hotspot.id
+        );
+        return hotspot.sealed && previousHotspot && !previousHotspot.sealed;
+      });
+      const effectPosition = sealedHotspot?.position ?? state.position;
+      const id = `${state.seed}-${state.actionsUsed}-${state.foamCharges}-${Date.now()}`;
+      const event: FoamDeployEffectEvent = {
+        id,
+        position: toWorld(state.maze, effectPosition),
+        sealedHotspot: Boolean(sealedHotspot)
+      };
+
+      setEvents((current) => [...current.slice(-5), event]);
+      const timer = window.setTimeout(() => {
+        setEvents((current) => current.filter((item) => item.id !== id));
+      }, FOAM_EFFECT_DURATION_MS);
+      timers.current.push(timer);
+    }
+
+    previousState.current = state;
+  }, [state]);
+
+  return (
+    <>
+      {events.map((event) => (
+        <FoamDeployEffect key={event.id} event={event} />
+      ))}
+    </>
   );
 }
 
@@ -1953,6 +2468,9 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
           args={useBrightScene ? ["#ffffff", 7, 22] : ["#223443", 4.2, 19]}
         />
       ) : null}
+      {viewMode === "robot" && useBrightScene ? (
+        <EarlyLevelParallaxBackdrop maze={state.maze} />
+      ) : null}
       {viewMode === "robot" ? (
         useLabRoof ? (
           <LabRoof maze={state.maze} />
@@ -1961,7 +2479,9 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
         ) : null
       ) : null}
       <ambientLight
-        intensity={viewMode === "robot" ? (useBrightScene ? 0.72 : 0.58) : 0.72}
+        intensity={
+          viewMode === "robot" ? (useBrightScene ? 0.72 : 0.58) : useBrightScene ? 0.48 : 0.72
+        }
       />
       {viewMode === "robot" && !useBrightScene ? (
         <hemisphereLight
@@ -1981,14 +2501,20 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
       <directionalLight
         castShadow
         position={[4, 9, 6]}
-        intensity={viewMode === "robot" ? (useBrightScene ? 1.15 : 0.98) : 1.18}
+        intensity={
+          viewMode === "robot" ? (useBrightScene ? 1.15 : 0.98) : useBrightScene ? 0.82 : 1.18
+        }
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
-      {viewMode === "robot" ? (
+      {viewMode === "robot" || viewMode === "overhead" ? (
         <>
-          <MazeFloor maze={state.maze} />
-          <ServicePipes maze={state.maze} />
+          <MazeFloor
+            maze={state.maze}
+            earlyOverhead={useBrightScene && viewMode === "overhead"}
+          />
+          {!useBrightScene ? <ReactorWaterFloor maze={state.maze} /> : null}
+          {viewMode === "robot" ? <ServicePipes maze={state.maze} /> : null}
         </>
       ) : null}
       {state.maze.cells.flatMap((row) =>
@@ -2018,6 +2544,7 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
       {state.hotspots.map((hotspot) => (
         <HotspotMarker key={hotspot.id} maze={state.maze} hotspot={hotspot} />
       ))}
+      <FoamDeploymentEffects state={state} />
       {viewMode === "robot" ? <SensorHint state={state} /> : null}
       {viewMode === "overhead" ? <RobotModel state={state} /> : null}
     </>
@@ -2053,8 +2580,12 @@ export default function GameScene({ state, viewMode }: GameSceneProps) {
   return (
     <div className={sceneClasses}>
       <Canvas shadows dpr={[1, 1.75]} gl={{ antialias: true }}>
-        <SceneBackground useOfficeTexture={state.level < REACTOR_ROOF_START_LEVEL} />
+        <SceneBackground
+          earlyLevel={state.level < REACTOR_ROOF_START_LEVEL}
+          viewMode={viewMode}
+        />
         <MazeScene state={state} viewMode={viewMode} />
+        {viewMode === "robot" ? <RobotCRTPostProcessing /> : null}
       </Canvas>
       {state.executionStatus === "success" ? (
         <div className="extraction-victory-signal" role="status" aria-live="polite">
