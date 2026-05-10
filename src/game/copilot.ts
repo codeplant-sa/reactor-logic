@@ -1,6 +1,11 @@
 import type { Direction, Position, ProgramBlock } from "./types";
 
-export type CopilotMode = "hint" | "review" | "next_step" | "explain";
+export type CopilotMode =
+  | "hint"
+  | "review"
+  | "next_step"
+  | "explain"
+  | "shortest_path";
 
 export interface CopilotHotspotSnapshot {
   id: string;
@@ -20,6 +25,35 @@ export interface CopilotBlockReference {
   label: string;
   description: string;
   category: string;
+}
+
+export interface CopilotRouteWaypoint {
+  kind: "hotspot" | "extraction";
+  id?: string;
+  position: Position;
+  pathIndex: number;
+}
+
+export interface CopilotRouteCommand {
+  action: "moveForward" | "turnLeft" | "turnRight" | "deployFoam";
+  count?: number;
+  position?: Position;
+  hotspotId?: string;
+}
+
+export interface CopilotShortestPath {
+  available: boolean;
+  reason?: string;
+  totalTiles: number;
+  hotspotsToSeal: number;
+  foamRequired: number;
+  foamAvailable: number;
+  foamSufficient: boolean;
+  path: Position[];
+  moveDirections: Direction[];
+  waypoints: CopilotRouteWaypoint[];
+  commands: CopilotRouteCommand[];
+  pseudoCode: string;
 }
 
 export interface CopilotSnapshot {
@@ -55,6 +89,7 @@ export interface CopilotSnapshot {
     pseudoCode: string;
     blocks: CopilotProgramBlock[];
   };
+  shortestPath: CopilotShortestPath;
   availableBlocks: CopilotBlockReference[];
   availableConditions: Array<{
     type: string;

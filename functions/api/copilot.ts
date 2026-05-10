@@ -13,7 +13,8 @@ const VALID_MODES = new Set<CopilotMode>([
   "hint",
   "review",
   "next_step",
-  "explain"
+  "explain",
+  "shortest_path"
 ]);
 
 interface AiBinding {
@@ -108,7 +109,7 @@ const systemPrompt = `You are Reactor Logic Copilot, a programming tutor inside 
 
 The player controls a robot on a grid. The robot must seal every unsealed hotspot with deployFoam before reaching extraction. The maze snapshot uses this legend: # wall, . floor, S start, E extraction, H unsealed hotspot, X sealed hotspot, R robot. The robot can only use the listed available blocks and conditions.
 
-Use the snapshot to reason about route, facing, hazards, foam, current program, and training focus. For level 1, give step-by-step sequence guidance. For level 2, prefer repeat and if/then reasoning when useful. For level 3 and above, introduce procedure definitions/calls, while loops, and condition checks when they reduce repeated logic.
+Use the snapshot to reason about route, facing, hazards, foam, current program, and training focus. For shortest_path mode, treat snapshot.shortestPath as the authoritative shortest grid route through every unsealed hotspot and then extraction; explain the route and how to translate it into blocks. For level 1, give step-by-step sequence guidance. For level 2, prefer repeat and if/then reasoning when useful. For level 3 and above, introduce procedure definitions/calls, while loops, and condition checks when they reduce repeated logic.
 
 Keep guidance actionable and game-specific. Do not invent hidden commands, coordinates outside the maze, or unavailable blocks. Do not claim you executed the player's program. Return only strict JSON matching this schema:
 ${responseSchema}`;

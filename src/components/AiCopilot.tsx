@@ -13,6 +13,7 @@ interface AiCopilotProps {
 const modeOptions: Array<{ value: CopilotMode; label: string }> = [
   { value: "hint", label: "Hint" },
   { value: "review", label: "Review" },
+  { value: "shortest_path", label: "Shortest route" },
   { value: "next_step", label: "Next step" },
   { value: "explain", label: "Explain" }
 ];

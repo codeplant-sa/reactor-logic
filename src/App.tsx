@@ -46,6 +46,7 @@ import type {
 } from "./game/copilot";
 import { executeNextInstruction, createExecutionRuntime } from "./game/interpreter";
 import { preloadGameAssets, PreloadProgress } from "./game/preloadAssets";
+import { planShortestPath } from "./game/routePlanner";
 import {
   buildTrainingProgram,
   generateMaze,
@@ -315,6 +316,7 @@ const buildCopilotSnapshot = (state: GameState): CopilotSnapshot => ({
     pseudoCode: programToPseudoCode(state.program),
     blocks: state.program.map(compactProgramBlock)
   },
+  shortestPath: planShortestPath(state),
   availableBlocks: Object.values(blockDefinitions).map((definition) => ({
     type: definition.type,
     label: definition.label,

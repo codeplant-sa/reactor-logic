@@ -34,7 +34,7 @@ npm run build
 
 ## Cloudflare Pages
 
-This project is configured to build as a Cloudflare Pages app with a Pages Function for the AI Copilot. The copilot posts a compact maze/program snapshot to `/api/copilot`, which calls Workers AI with `@cf/moonshotai/kimi-k2.6` through the `AI` binding.
+This project is configured to build as a Cloudflare Pages app with a Pages Function for the AI Copilot. The copilot posts a compact maze/program snapshot to `/api/copilot`, including a deterministic shortest-route plan through all unsealed hotspots to extraction, then calls Workers AI with `@cf/moonshotai/kimi-k2.6` through the `AI` binding.
 
 Cloudflare Pages Git settings:
 
@@ -68,6 +68,7 @@ Licensed under the GNU Affero General Public License v3.0 only. This keeps colla
 ## Project Shape
 
 - `src/game/mazeGenerator.ts`: fixed training levels, seeded maze generation, BFS reachability, par-action estimate, and training-route helpers.
+- `src/game/routePlanner.ts`: shortest path planning through unsealed hotspots to extraction for copilot route guidance.
 - `src/game/interpreter.ts`: block execution, conditions, nested control flow, safety cap, mission success/failure.
 - `src/game/blocks.ts`: registry-based block definitions and Python-like pseudocode rendering.
 - `src/game/robots.ts`: configurable robot stats and tradeoffs.

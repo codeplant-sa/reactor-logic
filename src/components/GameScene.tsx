@@ -2,6 +2,11 @@ import React, { useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera, PerspectiveCamera, useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import floorTextureUrl from "../../public/images/floor1.jpg";
+import reactorBackdropUrl from "../../public/images/reactor-backdrop.jpg";
+import wallTextureOneUrl from "../../public/images/wall1.jpg";
+import wallTextureTwoUrl from "../../public/images/wall2.jpg";
+import wallTextureFiveUrl from "../../public/images/wall5.jpg";
 import { getNextPosition, isWall, samePosition } from "../game/mazeGenerator";
 import { Direction, GameState, Hotspot, Position } from "../game/types";
 
@@ -27,15 +32,17 @@ const directionVectors: Record<Direction, THREE.Vector3> = {
 };
 
 const WALL_TEXTURE_PATHS = [
-  "/images/wall1.jpg",
-  "/images/wall2.jpg",
-  "/images/wall4.jpg"
+  wallTextureOneUrl,
+  wallTextureTwoUrl,
+  wallTextureFiveUrl
 ];
-const REACTOR_BACKDROP_PATH = "/images/reactor-backdrop.jpg";
+const FLOOR_TEXTURE_PATH = floorTextureUrl;
+const REACTOR_BACKDROP_PATH = reactorBackdropUrl;
 const BACKDROP_DISTANCE = 22;
 const BACKDROP_VERTICAL_OFFSET = 1.65;
 
 useTexture.preload(WALL_TEXTURE_PATHS);
+useTexture.preload(FLOOR_TEXTURE_PATH);
 useTexture.preload(REACTOR_BACKDROP_PATH);
 
 const toWorld = (maze: GameState["maze"], position: Position): [number, number, number] => [
@@ -96,6 +103,20 @@ function useBackdropTexture() {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 4;
+    texture.needsUpdate = true;
+    return texture;
+  }, [texture]);
+}
+
+function useFloorTexture() {
+  const texture = useTexture(FLOOR_TEXTURE_PATH);
+
+  return useMemo(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 1);
     texture.anisotropy = 4;
     texture.needsUpdate = true;
     return texture;
@@ -305,18 +326,21 @@ function ReactorBackdrop({ state }: { state: GameState }) {
 
 function FloorTile({
   position,
-  variant
+  variant,
+  texture
 }: {
   position: [number, number, number];
   variant: number;
+  texture: THREE.Texture;
 }) {
   return (
     <mesh position={[position[0], -0.04, position[2]]} receiveShadow>
       <boxGeometry args={[0.96, 0.05, 0.96]} />
       <meshStandardMaterial
-        color={variant % 2 === 0 ? "#2e3945" : "#26313d"}
-        roughness={0.82}
-        metalness={0.08}
+        map={texture}
+        color={variant % 2 === 0 ? "#d4e0e0" : "#bac7c8"}
+        roughness={0.9}
+        metalness={0.05}
       />
     </mesh>
   );
@@ -535,6 +559,7 @@ function ServicePipes({ maze }: { maze: GameState["maze"] }) {
 
 function MazeScene({ state, viewMode }: GameSceneProps) {
   const wallTextures = useWallTextures();
+  const floorTexture = useFloorTexture();
   const cameraDistance = Math.max(12, Math.max(state.maze.width, state.maze.height) * 1.25);
   const cameraFocus = useMemo(
     () => getCameraFocus(state.maze, state.maze.start),
@@ -614,6 +639,7 @@ function MazeScene({ state, viewMode }: GameSceneProps) {
               key={`${cell.x}-${cell.y}`}
               position={world}
               variant={cell.x + cell.y}
+              texture={floorTexture}
             />
           );
         })
