@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { Trash2, Wand2 } from "lucide-react";
 import { blockDefinitions, paletteBlockTypes } from "../game/blocks";
 import { ProgramBlock } from "../game/types";
 
@@ -7,9 +8,15 @@ const PALETTE_BLOCK_MIME = "application/reactor-palette-block";
 
 interface BlockPaletteProps {
   onAddBlock: (block: ProgramBlock) => void;
+  onLoadTrainingProgram: () => void;
+  onClearProgram: () => void;
 }
 
-export default function BlockPalette({ onAddBlock }: BlockPaletteProps) {
+export default function BlockPalette({
+  onAddBlock,
+  onLoadTrainingProgram,
+  onClearProgram
+}: BlockPaletteProps) {
   const [hoveredType, setHoveredType] = useState<string | null>(null);
   const suppressClickAfterDrag = useRef(false);
   const hoveredDefinition = hoveredType ? blockDefinitions[hoveredType] : null;
@@ -58,6 +65,26 @@ export default function BlockPalette({ onAddBlock }: BlockPaletteProps) {
             </button>
           );
         })}
+      </div>
+      <div className="palette-actions" aria-label="Command list actions">
+        <button
+          type="button"
+          className="palette-action-button training"
+          title="Generate training solution"
+          aria-label="Generate training solution"
+          onClick={onLoadTrainingProgram}
+        >
+          <Wand2 size={16} />
+        </button>
+        <button
+          type="button"
+          className="palette-action-button clear"
+          title="Clear command list"
+          aria-label="Clear command list"
+          onClick={onClearProgram}
+        >
+          <Trash2 size={16} />
+        </button>
       </div>
       {hoveredDefinition ? (
         <aside className={`module-popover ${hoveredDefinition.category}`}>

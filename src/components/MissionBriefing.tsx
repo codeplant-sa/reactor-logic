@@ -12,16 +12,17 @@ export default function MissionBriefing({ compact = false }: MissionBriefingProp
         <small>Emergency containment mode</small>
       </div>
       <p>
-        A severe coastal systems failure has locked down a fictional service maze.
-        Human teams cannot enter, so a response robot must seal glowing hotspots
-        with fictional stabilizing foam and reach the extraction hatch before the
-        meltdown timer reaches zero.
+        This simulation is inspired by the reactor emergency at Fukushima, where
+        radiation and structural damage made direct human access impossible.
+        Remote robots must navigate service corridors, locate radioactive leaks,
+        stabilize damaged systems, and prevent the crisis from spreading.
       </p>
       {!compact ? (
         <p>
-          The opening training levels use fixed mazes and reference solutions:
-          sequence first, then conditions and loops, then procedures and while
-          logic. Debug safely with Step mode.
+          You are not a trained nuclear operator. You are a gamer selected for
+          the mission because your exceptional control skills, pattern reading,
+          and split-second routing decisions give the robot its best chance of
+          reaching the shutdown points.
         </p>
       ) : null}
     </section>

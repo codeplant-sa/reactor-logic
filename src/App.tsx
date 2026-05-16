@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
+  Archive,
+  BookOpen,
   Camera,
   Bot,
+  Code2,
   Github,
   Info,
   Map as MapIcon,
@@ -13,18 +17,20 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  X
+  Wrench,
+  X,
+  type LucideIcon
 } from "lucide-react";
 import AiCopilot from "./components/AiCopilot";
-import BlockPalette from "./components/BlockPalette";
 import CodePreview from "./components/CodePreview";
 import GameScene, { CameraViewMode } from "./components/GameScene";
 import HUD from "./components/HUD";
 import MiniMap from "./components/MiniMap";
 import MissionBriefing from "./components/MissionBriefing";
-import ProgramEditor, { PaletteAddRequest } from "./components/ProgramEditor";
+import ProgramEditor from "./components/ProgramEditor";
 import Preloader from "./components/Preloader";
 import RobotSelect from "./components/RobotSelect";
+import type { CliCommand } from "./components/CommandTerminal";
 import {
   isBackgroundMusicMuted,
   playIntroMusic,
@@ -37,6 +43,7 @@ import {
   blockDefinitions,
   CONDITION_OPTIONS,
   countBlocks,
+  createBlock,
   programToPseudoCode
 } from "./game/blocks";
 import type {
@@ -46,6 +53,11 @@ import type {
   CopilotSnapshot
 } from "./game/copilot";
 import { executeNextInstruction, createExecutionRuntime } from "./game/interpreter";
+import {
+  HISTORICAL_FACTS,
+  getNextHistoricalFact,
+  type HistoricalFact
+} from "./game/historicalFacts";
 import { preloadGameAssets, PreloadProgress } from "./game/preloadAssets";
 import { planShortestPath } from "./game/routePlanner";
 import {
@@ -72,6 +84,7 @@ const VICTORY_SUMMARY_DELAY_MS = 1800;
 const LEVEL_TRANSITION_DELAY_MS = 1450;
 const TRAINING_COMPLETE_STORAGE_KEY = "reactor-logic.training-complete";
 const TRAINING_DISABLED_STORAGE_KEY = "reactor-logic.training-disabled";
+const HISTORICAL_ARCHIVE_STORAGE_KEY = "reactor-logic.historical-archive";
 const COPILOT_FLOAT_STORAGE_KEY = "reactor-logic.copilot-float";
 const COPILOT_FLOAT_MARGIN = 12;
 const COPILOT_FLOAT_WIDTH = 390;
@@ -90,6 +103,35 @@ interface OverlayPosition {
   x: number;
   y: number;
 }
+
+interface HistoricalHotspotMonitor {
+  gameKey: string;
+  sealedIds: Set<string>;
+}
+
+interface HistoricalPauseState {
+  gameKey: string;
+  resumeAfterDismiss: boolean;
+}
+
+type MissionTrayTabId =
+  | "briefing"
+  | "intel"
+  | "code"
+  | "tools";
+
+interface MissionTrayTab {
+  id: MissionTrayTabId;
+  label: string;
+  Icon: LucideIcon;
+}
+
+const MISSION_TRAY_TABS: MissionTrayTab[] = [
+  { id: "briefing", label: "Briefing", Icon: BookOpen },
+  { id: "intel", label: "Sensors", Icon: Activity },
+  { id: "code", label: "Code", Icon: Code2 },
+  { id: "tools", label: "Tools", Icon: Wrench }
+];
 
 const DEFAULT_PINNED_MINIMAP_POSITION: OverlayPosition = { x: 24, y: 24 };
 
@@ -261,6 +303,60 @@ const writeTrainingDisabled = (disabled: boolean) => {
     // Local storage can be unavailable in private browsing or locked-down embeds.
   }
 };
+
+const sortFactIdsByUnlockOrder = (factIds: number[]): number[] => {
+  const order = new Map(
+    HISTORICAL_FACTS.map((fact) => [fact.id, fact.unlockOrder])
+  );
+  return [...factIds].sort((left, right) => {
+    const leftOrder = order.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = order.get(right) ?? Number.MAX_SAFE_INTEGER;
+    return leftOrder - rightOrder;
+  });
+};
+
+const readUnlockedHistoricalFactIds = (): number[] => {
+  try {
+    const raw = window.localStorage.getItem(HISTORICAL_ARCHIVE_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const validFactIds = new Set(HISTORICAL_FACTS.map((fact) => fact.id));
+    const cleaned = parsed.filter(
+      (factId): factId is number =>
+        typeof factId === "number" &&
+        Number.isInteger(factId) &&
+        validFactIds.has(factId)
+    );
+
+    return sortFactIdsByUnlockOrder([...new Set(cleaned)]);
+  } catch {
+    return [];
+  }
+};
+
+const writeUnlockedHistoricalFactIds = (factIds: number[]) => {
+  try {
+    window.localStorage.setItem(
+      HISTORICAL_ARCHIVE_STORAGE_KEY,
+      JSON.stringify(sortFactIdsByUnlockOrder(factIds))
+    );
+  } catch {
+    // Local storage can be unavailable in private browsing or locked-down embeds.
+  }
+};
+
+const getHistoricalGameKey = (state: GameState): string =>
+  `${state.level}:${state.seed}`;
+
+const getSealedHotspotIds = (state: GameState): Set<string> =>
+  new Set(
+    state.hotspots
+      .filter((hotspot) => hotspot.sealed)
+      .map((hotspot) => hotspot.id)
+  );
 
 const getStartingLevel = (): number =>
   readTrainingComplete() || readTrainingDisabled() ? FIRST_GENERATED_LEVEL : 1;
@@ -636,6 +732,92 @@ function MissionSummaryModal({
   );
 }
 
+function HistoricalRecordModal({
+  fact,
+  onDismiss
+}: {
+  fact: HistoricalFact;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="historical-record-overlay" role="presentation">
+      <section
+        className={`historical-record-card ${fact.category}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`historical-record-title-${fact.id}`}
+      >
+        <div className="historical-record-topline">
+          <span>Historical record unlocked</span>
+          <button type="button" title="Dismiss record" onClick={onDismiss}>
+            <X size={15} />
+          </button>
+        </div>
+        <div className="historical-timeline-marker">
+          <span>{fact.year}</span>
+          <i aria-hidden />
+          <strong>{fact.timestamp}</strong>
+        </div>
+        <h2 id={`historical-record-title-${fact.id}`}>{fact.title}</h2>
+        <p className="historical-record-text">{fact.shortText}</p>
+        {fact.detailedText ? (
+          <p className="historical-record-detail">{fact.detailedText}</p>
+        ) : null}
+        <div className="historical-record-footer">
+          <span>New Historical Record Added</span>
+          <button type="button" onClick={onDismiss}>
+            Continue
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function HistoricalArchivePanel({
+  unlockedFactIds
+}: {
+  unlockedFactIds: number[];
+}) {
+  const unlockedFacts = new Set(unlockedFactIds);
+
+  return (
+    <section className="historical-archive tray-panel">
+      <div className="historical-archive-heading">
+        <span>
+          <Archive size={15} />
+          Historical Archive
+        </span>
+        <small>
+          {unlockedFacts.size}/{HISTORICAL_FACTS.length}
+        </small>
+      </div>
+      <ol className="historical-archive-list">
+        {HISTORICAL_FACTS.map((fact) => {
+          const unlocked = unlockedFacts.has(fact.id);
+          return (
+            <li
+              key={fact.id}
+              className={unlocked ? "unlocked" : "locked"}
+              data-category={fact.category}
+            >
+              <div className="archive-record-heading">
+                <span>{unlocked ? fact.title : `Record ${fact.unlockOrder}`}</span>
+                <small>{unlocked ? fact.timestamp : "Locked"}</small>
+              </div>
+              <p>
+                {unlocked
+                  ? fact.detailedText ?? fact.shortText
+                  : "Neutralize another hotspot to unlock this record."}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
 function GitHubLink() {
   return (
     <a
@@ -685,6 +867,13 @@ export default function App() {
   const [pinnedMinimapPosition, setPinnedMinimapPosition] = useState(
     readPinnedMinimapPosition
   );
+  const [activeTrayTab, setActiveTrayTab] =
+    useState<MissionTrayTabId>("briefing");
+  const [unlockedHistoricalFactIds, setUnlockedHistoricalFactIds] = useState(
+    readUnlockedHistoricalFactIds
+  );
+  const [activeHistoricalFact, setActiveHistoricalFact] =
+    useState<HistoricalFact | null>(null);
   const [showMissionSummary, setShowMissionSummary] = useState(false);
   const [levelTransitionLabel, setLevelTransitionLabel] = useState<string | null>(
     null
@@ -692,10 +881,11 @@ export default function App() {
   const [mapPinned, setMapPinned] = useState(true);
   const [cameraViewMode, setCameraViewMode] = useState<CameraViewMode>("robot");
   const [musicMuted, setMusicMuted] = useState(isBackgroundMusicMuted());
-  const [paletteAddRequest, setPaletteAddRequest] =
-    useState<PaletteAddRequest | null>(null);
   const runtimeRef = useRef<ExecutionRuntime | null>(null);
   const levelTransitionTimerRef = useRef<number | null>(null);
+  const historicalPauseRef = useRef<HistoricalPauseState | null>(null);
+  const historicalHotspotMonitorRef =
+    useRef<HistoricalHotspotMonitor | null>(null);
   const playfieldRef = useRef<HTMLElement | null>(null);
   const pinnedMinimapRef = useRef<HTMLDivElement | null>(null);
   const pinnedMinimapDragRef = useRef<{
@@ -721,12 +911,48 @@ export default function App() {
     }
   };
 
+  const clearHistoricalRecordOverlay = () => {
+    historicalPauseRef.current = null;
+    setActiveHistoricalFact(null);
+  };
+
   const skipTrainingLevels = trainingComplete || trainingDisabled;
 
   const updateTrainingDisabled = (disabled: boolean) => {
     writeTrainingDisabled(disabled);
     setTrainingDisabled(disabled);
   };
+
+  const dismissHistoricalFact = useCallback(() => {
+    setActiveHistoricalFact(null);
+
+    const pauseState = historicalPauseRef.current;
+    historicalPauseRef.current = null;
+
+    if (!pauseState?.resumeAfterDismiss) {
+      return;
+    }
+
+    setGame((previous) =>
+      previous &&
+      getHistoricalGameKey(previous) === pauseState.gameKey &&
+      previous.executionStatus === "paused"
+        ? { ...previous, executionStatus: "running" }
+        : previous
+    );
+  }, []);
+
+  const showHistoricalFact = useCallback(
+    (
+      fact: HistoricalFact,
+      resumeAfterDismiss: boolean,
+      gameKey: string
+    ) => {
+      historicalPauseRef.current = { gameKey, resumeAfterDismiss };
+      setActiveHistoricalFact(fact);
+    },
+    []
+  );
 
   useEffect(() => {
     let active = true;
@@ -763,6 +989,7 @@ export default function App() {
 
   const beginMission = (robot: RobotConfig, nextLevel = level, seed?: string) => {
     clearLevelTransitionTimer();
+    clearHistoricalRecordOverlay();
     setLevelTransitionLabel(null);
     setShowMissionSummary(false);
     resetRuntime();
@@ -835,6 +1062,70 @@ export default function App() {
   }, [executeStep, game?.executionStatus]);
 
   useEffect(() => {
+    if (!game) {
+      historicalHotspotMonitorRef.current = null;
+      return;
+    }
+
+    const gameKey = getHistoricalGameKey(game);
+    const sealedIds = getSealedHotspotIds(game);
+    const previous = historicalHotspotMonitorRef.current;
+
+    if (
+      !previous ||
+      previous.gameKey !== gameKey ||
+      sealedIds.size < previous.sealedIds.size
+    ) {
+      historicalHotspotMonitorRef.current = { gameKey, sealedIds };
+      return;
+    }
+
+    const hasNewlySealedHotspot = [...sealedIds].some(
+      (hotspotId) => !previous.sealedIds.has(hotspotId)
+    );
+    historicalHotspotMonitorRef.current = { gameKey, sealedIds };
+
+    if (activeHistoricalFact || !hasNewlySealedHotspot) {
+      return;
+    }
+
+    const nextFact = getNextHistoricalFact(unlockedHistoricalFactIds);
+    if (!nextFact) {
+      return;
+    }
+
+    const resumeAfterDismiss = game.executionStatus === "running";
+    const archiveMessage = `Historical record unlocked: ${nextFact.title}.`;
+    const nextUnlockedFactIds = sortFactIdsByUnlockOrder([
+      ...unlockedHistoricalFactIds,
+      nextFact.id
+    ]);
+
+    setUnlockedHistoricalFactIds(nextUnlockedFactIds);
+    writeUnlockedHistoricalFactIds(nextUnlockedFactIds);
+    setGame((previousState) => {
+      if (!previousState || getHistoricalGameKey(previousState) !== gameKey) {
+        return previousState;
+      }
+
+      return {
+        ...previousState,
+        executionStatus:
+          previousState.executionStatus === "running"
+            ? "paused"
+            : previousState.executionStatus,
+        missionLog: [archiveMessage, ...previousState.missionLog].slice(0, 12)
+      };
+    });
+    showHistoricalFact(nextFact, resumeAfterDismiss, gameKey);
+  }, [
+    activeHistoricalFact,
+    game,
+    showHistoricalFact,
+    unlockedHistoricalFactIds
+  ]);
+
+  useEffect(() => {
     if (
       !trainingComplete &&
       game?.executionStatus === "success" &&
@@ -875,9 +1166,84 @@ export default function App() {
     );
   };
 
+  const handleCliCommand = (commands: CliCommand[]): string[] => {
+    if (!game) {
+      return ["No active mission."];
+    }
+
+    if (game.executionStatus === "running") {
+      return ["Pause the running program before using CLI."];
+    }
+
+    if (game.executionStatus === "failed" || game.executionStatus === "success") {
+      return ["Mission ended. Reset robot to continue."];
+    }
+
+    const outputLines: string[] = [];
+    let nextState = game;
+
+    runCommands: for (const [commandIndex, command] of commands.entries()) {
+      const blockType =
+        command.action === "forward"
+          ? "moveForward"
+          : command.action === "left"
+            ? "turnLeft"
+            : command.action === "right"
+              ? "turnRight"
+              : "deployFoam";
+
+      for (let step = 0; step < command.repeat; step += 1) {
+        const block = createBlock(blockType);
+        const result = executeNextInstruction(
+          {
+            ...nextState,
+            executionStatus: "running",
+            activeBlockId: undefined
+          },
+          createExecutionRuntime([block])
+        );
+        nextState = result.state;
+        const latestMessage =
+          nextState.missionLog[0] ?? `${command.action} executed.`;
+        const commandPrefix =
+          commands.length > 1 ? `[${commandIndex + 1}/${commands.length}] ` : "";
+        const loopPrefix =
+          command.repeat > 1 ? `${step + 1}/${command.repeat}: ` : "";
+        outputLines.push(`${commandPrefix}${loopPrefix}${latestMessage}`);
+
+        if (
+          nextState.executionStatus === "failed" ||
+          nextState.executionStatus === "success"
+        ) {
+          break runCommands;
+        }
+      }
+    }
+
+    if (
+      nextState.executionStatus !== "failed" &&
+      nextState.executionStatus !== "success"
+    ) {
+      nextState = {
+        ...nextState,
+        executionStatus: "idle",
+        activeBlockId: undefined
+      };
+    }
+
+    if (nextState.executionStatus === "success") {
+      nextState = { ...nextState, score: calculateScore(nextState) };
+    }
+
+    resetRuntime();
+    setGame(nextState);
+    return outputLines;
+  };
+
   const resetRobot = (programOverride?: ProgramBlock[]) => {
     if (!game) return;
     clearLevelTransitionTimer();
+    clearHistoricalRecordOverlay();
     setLevelTransitionLabel(null);
     setShowMissionSummary(false);
     resetRuntime();
@@ -890,6 +1256,7 @@ export default function App() {
   const resetLevel = () => {
     if (!game) return;
     clearLevelTransitionTimer();
+    clearHistoricalRecordOverlay();
     setLevelTransitionLabel(null);
     setShowMissionSummary(false);
     resetRuntime();
@@ -900,6 +1267,7 @@ export default function App() {
 
   const quitMission = () => {
     clearLevelTransitionTimer();
+    clearHistoricalRecordOverlay();
     setLevelTransitionLabel(null);
     setShowMissionSummary(false);
     setSelectedRobot(null);
@@ -925,6 +1293,7 @@ export default function App() {
         ? FIRST_GENERATED_LEVEL
         : level + 1;
     resetRuntime();
+    clearHistoricalRecordOverlay();
     setShowMissionSummary(false);
     setLevelTransitionLabel(`Loading level ${nextLevel}`);
     clearLevelTransitionTimer();
@@ -1324,6 +1693,79 @@ export default function App() {
     );
   }
 
+  const activeTrayTabConfig =
+    MISSION_TRAY_TABS.find((tab) => tab.id === activeTrayTab) ??
+    MISSION_TRAY_TABS[0];
+  const activeTrayPanelId = `mission-tray-panel-${activeTrayTab}`;
+  const activeTrayTabId = `mission-tray-tab-${activeTrayTab}`;
+  const missionTrayContent = (() => {
+    switch (activeTrayTab) {
+      case "briefing":
+        return (
+          <>
+            <MissionBriefing compact />
+            <HistoricalArchivePanel
+              unlockedFactIds={unlockedHistoricalFactIds}
+            />
+            <TrainingPanel state={game} />
+            <ScorePanel state={game} />
+          </>
+        );
+      case "intel":
+        return <SensorPanel state={game} />;
+      case "code":
+        return <CodePreview program={game.program} />;
+      case "tools":
+        return (
+          <section className="tray-panel">
+            <div className="panel-heading">
+              <span>Level Tools</span>
+              <small>Replay and level options</small>
+            </div>
+            <div className="tray-actions">
+              <button type="button" onClick={resetLevel}>
+                <RefreshCw size={15} />
+                Reset level
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(levelTransitionLabel)}
+                onClick={newLevel}
+              >
+                <Shuffle size={15} />
+                New level
+              </button>
+            </div>
+            <label className="training-skip-setting tray-setting">
+              <input
+                type="checkbox"
+                checked={trainingDisabled}
+                onChange={(event) =>
+                  updateTrainingDisabled(event.currentTarget.checked)
+                }
+              />
+              <span>Disable training levels (1-3)</span>
+            </label>
+            <div className="seed-row tray-seed-row">
+              <label>
+                Seed
+                <input
+                  value={seedDraft}
+                  onChange={(event) => setSeedDraft(event.target.value)}
+                />
+              </label>
+              <button type="button" onClick={loadSeed}>
+                Load
+              </button>
+              <button type="button" onClick={quitMission}>
+                Robot
+              </button>
+            </div>
+          </section>
+        );
+    }
+  })();
+
   return (
     <main className="game-layout">
       <HUD
@@ -1459,7 +1901,7 @@ export default function App() {
             <div className="tray-header">
               <div>
                 <strong>Mission Tray</strong>
-                <span>Map, code, logs, and level tools</span>
+                <span>{activeTrayTabConfig.label}</span>
               </div>
               <button
                 type="button"
@@ -1469,81 +1911,39 @@ export default function App() {
                 <X size={16} />
               </button>
             </div>
-            <div className="tray-scroll">
-              <MissionBriefing compact />
-              {mapPinned ? (
-                <section className="tray-panel map-pin-note">
-                  <div className="panel-heading">
-                    <span>Minimap</span>
-                    <small>Pinned</small>
-                  </div>
-                  <p>The minimap is pinned to the playfield so it stays visible with the command list.</p>
-                </section>
-              ) : (
-                <MiniMap state={game} />
-              )}
-              <SensorPanel state={game} />
-              <ScorePanel state={game} />
-              <TrainingPanel state={game} />
-              <CodePreview program={game.program} />
-              <section className="tray-panel">
-                <div className="panel-heading">
-                  <span>Level Tools</span>
-                  <small>Replay and level options</small>
-                </div>
-                <div className="tray-actions">
-                  <button type="button" onClick={resetLevel}>
-                    <RefreshCw size={15} />
-                    Reset level
-                  </button>
-                  <button
-                    type="button"
-                    disabled={Boolean(levelTransitionLabel)}
-                    onClick={newLevel}
-                  >
-                    <Shuffle size={15} />
-                    New level
-                  </button>
-                </div>
-                <label className="training-skip-setting tray-setting">
-                  <input
-                    type="checkbox"
-                    checked={trainingDisabled}
-                    onChange={(event) =>
-                      updateTrainingDisabled(event.currentTarget.checked)
-                    }
-                  />
-                  <span>Disable training levels (1-3)</span>
-                </label>
-                <div className="seed-row tray-seed-row">
-                  <label>
-                    Seed
-                    <input
-                      value={seedDraft}
-                      onChange={(event) => setSeedDraft(event.target.value)}
-                    />
-                  </label>
-                  <button type="button" onClick={loadSeed}>
-                    Load
-                  </button>
-                  <button
-                    type="button"
-                    onClick={quitMission}
-                  >
-                    Robot
-                  </button>
-                </div>
-              </section>
-              <div className="mission-log tray-panel">
-                <div className="panel-heading">
-                  <span>Mission Log</span>
-                  <small>Latest first</small>
-                </div>
-                <ol>
-                  {game.missionLog.map((item, index) => (
-                    <li key={`${item}-${index}`}>{item}</li>
-                  ))}
-                </ol>
+            <div className="tray-body">
+              <nav
+                className="tray-tabs"
+                role="tablist"
+                aria-label="Mission tray sections"
+              >
+                {MISSION_TRAY_TABS.map(({ id, label, Icon }) => {
+                  const selected = activeTrayTab === id;
+                  return (
+                    <button
+                      key={id}
+                      id={`mission-tray-tab-${id}`}
+                      type="button"
+                      role="tab"
+                      className={selected ? "active" : ""}
+                      aria-selected={selected}
+                      aria-controls={`mission-tray-panel-${id}`}
+                      title={label}
+                      onClick={() => setActiveTrayTab(id)}
+                    >
+                      <Icon size={16} />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+              <div
+                id={activeTrayPanelId}
+                className="tray-scroll"
+                role="tabpanel"
+                aria-labelledby={activeTrayTabId}
+              >
+                {missionTrayContent}
               </div>
             </div>
           </>
@@ -1578,30 +1978,21 @@ export default function App() {
         />
       </aside>
       <aside className="side-panel">
-        <div className="editor-grid">
-          <BlockPalette
-            onAddBlock={(block) =>
-              setPaletteAddRequest({
-                id: Date.now(),
-                block
-              })
-            }
-          />
-          <ProgramEditor
-            program={game.program}
-            activeBlockId={game.activeBlockId}
-            onProgramChange={handleProgramChange}
-            onLoadTrainingProgram={loadTrainingProgram}
-            onClearProgram={() => handleProgramChange([])}
-            paletteAddRequest={paletteAddRequest}
-            onPaletteAddHandled={(id) =>
-              setPaletteAddRequest((request) =>
-                request?.id === id ? null : request
-              )
-            }
-          />
-        </div>
+        <ProgramEditor
+          program={game.program}
+          activeBlockId={game.activeBlockId}
+          onProgramChange={handleProgramChange}
+          onCliCommand={handleCliCommand}
+          onLoadTrainingProgram={loadTrainingProgram}
+          onClearProgram={() => handleProgramChange([])}
+        />
       </aside>
+      {activeHistoricalFact ? (
+        <HistoricalRecordModal
+          fact={activeHistoricalFact}
+          onDismiss={dismissHistoricalFact}
+        />
+      ) : null}
       <div
         className={`level-transition-overlay ${
           levelTransitionLabel ? "active" : ""

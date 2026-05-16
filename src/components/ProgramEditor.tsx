@@ -1,12 +1,14 @@
-import React, { DragEvent, useEffect, useMemo, useState } from "react";
+import React, { DragEvent, useMemo, useState } from "react";
 import {
   Copy,
   GripVertical,
   Trash2,
   ChevronUp,
   ChevronDown,
-  Wand2
+  List as ListIcon,
+  Terminal
 } from "lucide-react";
+import CommandTerminal, { CliCommand } from "./CommandTerminal";
 import {
   blockDefinitions,
   cloneBlock,
@@ -16,6 +18,7 @@ import {
   createBlock
 } from "../game/blocks";
 import { ChildSlot, CounterOperator, ProgramBlock } from "../game/types";
+import BlockPalette from "./BlockPalette";
 
 type SlotKey = ChildSlot | "root";
 
@@ -31,19 +34,13 @@ const LEGACY_BLOCK_MIME = "application/reactor-block";
 const PALETTE_BLOCK_MIME = "application/reactor-palette-block";
 const PROGRAM_BLOCK_MIME = "application/reactor-program-block";
 
-export interface PaletteAddRequest {
-  id: number;
-  block: ProgramBlock;
-}
-
 interface ProgramEditorProps {
   program: ProgramBlock[];
   activeBlockId?: string;
   onProgramChange: (program: ProgramBlock[]) => void;
+  onCliCommand: (commands: CliCommand[]) => string[];
   onLoadTrainingProgram: () => void;
   onClearProgram: () => void;
-  paletteAddRequest?: PaletteAddRequest | null;
-  onPaletteAddHandled?: (id: number) => void;
 }
 
 const parsePayload = (event: DragEvent) => {
@@ -432,30 +429,30 @@ export default function ProgramEditor({
   program,
   activeBlockId,
   onProgramChange,
+  onCliCommand,
   onLoadTrainingProgram,
-  onClearProgram,
-  paletteAddRequest,
-  onPaletteAddHandled
+  onClearProgram
 }: ProgramEditorProps) {
   const procedureNames = useMemo(() => collectProcedureNames(program), [program]);
   const [selectedTarget, setSelectedTarget] = useState<DropTarget | null>(null);
+  const [editorMode, setEditorMode] = useState<"list" | "cli">("list");
 
-  useEffect(() => {
-    if (!paletteAddRequest) {
-      return;
-    }
-
+  const getPaletteInsertTarget = (): DropTarget => {
     const target =
       selectedTarget?.parentId && !findBlock(program, selectedTarget.parentId)
         ? { parentId: null, slot: "root" as const, index: program.length }
         : selectedTarget ?? { parentId: null, slot: "root" as const, index: program.length };
 
-    onProgramChange(insertBlock(program, target, paletteAddRequest.block));
+    return target;
+  };
+
+  const addPaletteBlock = (block: ProgramBlock) => {
+    const target = getPaletteInsertTarget();
+    onProgramChange(insertBlock(program, target, block));
     if (selectedTarget) {
       setSelectedTarget({ ...target, index: target.index + 1 });
     }
-    onPaletteAddHandled?.(paletteAddRequest.id);
-  }, [onPaletteAddHandled, onProgramChange, paletteAddRequest, program, selectedTarget]);
+  };
 
   const handleDrop = (target: DropTarget, event: DragEvent) => {
     event.preventDefault();
@@ -626,18 +623,47 @@ export default function ProgramEditor({
   return (
     <section className="program-editor">
       <div className="panel-heading">
-        <span>Command List</span>
-        <div className="editor-actions">
-          <button type="button" onClick={onLoadTrainingProgram}>
-            <Wand2 size={14} />
-            Training solution
+        <div
+          className="command-tabs"
+          role="tablist"
+          aria-label="Command editor mode"
+        >
+          <button
+            type="button"
+            className={editorMode === "list" ? "active" : ""}
+            role="tab"
+            aria-selected={editorMode === "list"}
+            onClick={() => setEditorMode("list")}
+          >
+            <ListIcon size={14} />
+            Command List
           </button>
-          <button type="button" onClick={onClearProgram}>
-            Clear
+          <button
+            type="button"
+            className={editorMode === "cli" ? "active" : ""}
+            role="tab"
+            aria-selected={editorMode === "cli"}
+            onClick={() => setEditorMode("cli")}
+          >
+            <Terminal size={14} />
+            CLI
           </button>
         </div>
       </div>
-      {renderList(program, null, "root")}
+      {editorMode === "list" ? (
+        <div className="command-list-layout">
+          <BlockPalette
+            onAddBlock={addPaletteBlock}
+            onLoadTrainingProgram={onLoadTrainingProgram}
+            onClearProgram={onClearProgram}
+          />
+          {renderList(program, null, "root")}
+        </div>
+      ) : (
+        <CommandTerminal
+          onExecuteCommand={onCliCommand}
+        />
+      )}
     </section>
   );
 }
